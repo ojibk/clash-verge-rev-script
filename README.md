@@ -1,11 +1,11 @@
 /**
+ *   Clash Verge Rev 全局扩展脚本（Global Extend Script）· 基于哨兵标记的幂等性规则写入（栈重建算法 O(N)） Firefly 精确放行版 - v260520
+ * 
  * ══════════════════════════ ░░ 脚本自述 ░░ ══════════════════════════
  *
  *   Script.js 路径（Windows）：
  *     %APPDATA%\io.github.clash-verge-rev.clash-verge-rev\profiles
  *     C:\Users\Administrator\AppData\Roaming\io.github.clash-verge-rev.clash-verge-rev\profiles
- *
- *   名称：Clash Verge Rev 全局扩展脚本 Firefly 精确放行版 · 基于哨兵标记的幂等性规则写入（栈重建算法 O(N)）- v260520
  *
  *   默认模式：拦截优先 + Firefly 精确例外放行
  *     - ENABLE_FIREFLY = true：精确放行 Firefly 推理请求，其余拦截保持不变
@@ -201,7 +201,7 @@ function main(config) {
     //
     // ⚠️ 哨兵格式设计为固定不变：哨兵必须是合法的 Clash 三段式规则（TYPE,VALUE,POLICY）且格式固定，
     //    清理算法依赖精确等值（===）匹配；若确需修改哨兵格式，须同步更新清理逻辑。
-    // 💡 TLD 选型：使用 RFC 2606 明确保留的 .invalid（无效域），而非 .local（RFC 6762 mDNS 保留域）。
+    // 💡 TLD 选型：使用 RFC 6761（BCP 206，2013） 明确保留的 .invalid（无效域），而非 .local（RFC 6762 mDNS 保留域）。
     //    .local 在部分 Mihomo 版本或系统级 mDNS 配置下可能触发 DNS 多播查询；
     //    .invalid 作为保留域，标准 DNS 实现不应对其解析，产生额外 DNS 流量的风险极低，更为安全。
     const _sentinelStart = "DOMAIN,START-script-sentinel-marker.invalid,DIRECT";
