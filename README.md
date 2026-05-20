@@ -1426,9 +1426,9 @@ function main(config) {
         "DOMAIN-SUFFIX,mpyit.com,DIRECT",         // 殁漂遥软件分享站
         "DOMAIN-SUFFIX,25xianbao.com,DIRECT",     // 卡圈线报
         "DOMAIN-SUFFIX,dir28.com,DIRECT",         // 羊毛活动
-        "DOMAIN-SUFFIX,aserweb.com,DIRECT",       // 行业 ERP
-        "DOMAIN-SUFFIX,zlkj.com,DIRECT",          // 行业 SCRM
-        "DOMAIN-SUFFIX,threadify.com,DIRECT",     // 小众独立站，直连以确保访问
+        "DOMAIN-SUFFIX,ERP.com,DIRECT",       // 行业 ERP
+        "DOMAIN-SUFFIX,SCRM.com,DIRECT",          // 行业 SCRM
+        "DOMAIN-SUFFIX,独立站.com,DIRECT",     // 小众独立站，直连以确保访问
         "DOMAIN-KEYWORD,amazon,DIRECT",           // 亚马逊直连（⚠️ 覆盖所有含 amazon 的域名，含 AWS；若 AWS 服务需代理，改用精确 DOMAIN-SUFFIX 规则）
                                                    // ⚠️ amazon-adsystem.com 的无冲突依赖 LAYER_ORDER 不变性（block 层先于 direct 层命中）：
                                                    //    若将 amazon-adsystem.com 从 genericAdSuffix 移除，此 DIRECT 将使其广告服务变为直连。
