@@ -176,7 +176,7 @@ function main(config) {
     //   其后全部有效配对未处理，旧注入规则全部残留；O(P×N) 时间，每轮 splice 内存重分配。
     //   变体（废弃）：findIndex 取全局首个 END 而非向前最近配对，嵌套场景连带删除哨兵间有效用户规则。
     //
-    // (3) 采用：单次遍历栈重建（Stack Rebuild）—— O(N) 时间 / O(N) 空间，当前方案。
+    // (3) 采用方案：单次遍历栈重建（Stack Rebuild）—— O(N) 时间 / O(N) 空间。
     //
     // ⚠️ 哨兵格式设计为固定不变：哨兵必须是合法的 Clash 三段式规则（TYPE,VALUE,POLICY）且格式固定，
     //    清理算法依赖精确等值（===）匹配；若确需修改哨兵格式，须同步更新清理逻辑。
@@ -195,7 +195,7 @@ function main(config) {
             if (rule === _sentinelStart) {
                 stack.push(newRules.length); // 记录快照：若后续遇到匹配 END，从此处截断
                 // 孤儿 START 场景：sentinel 标记自身因 continue 被静默丢弃，不进入 newRules；
-                // 但其后至数组末尾（或下一配对 END 前）的所有规则因未触发截断，会被原样推入 newRules 并保留，无需额外处理。
+                // 但其后至数组末尾（或下一配对 END 前）的所有规则因未触发截断，会被原样推入 newRules 并保留。
                 //（注：这些规则可能是旧注入规则而非用户订阅规则，取决于孤儿 START 出现的位置）
                 continue;
             }
@@ -1728,7 +1728,7 @@ function main(config) {
             // 与 rules 层的 REJECT-DROP 规则保持覆盖对称，形成 DNS 层 + rules 层双重纵深防御。
             const hijackDomains = [
                 // ──── 966v26.com（有明确社区记录）────
-                "+.966v26.com",           // 新版内核：主域 + 所有多级子域
+                "+.966v26.com",           // 主域 + 所有多级子域
                 // "966v26.com",             // 旧版内核兜底：主域精确匹配。旧版内核可能是远古版本，甚至 Clash 原版内核就支持，注释掉
                 // "*.966v26.com",           // 旧版内核兜底：单级通配符
                 // "api.966v26.com",         // 显式精确（双重保障核心接口）
