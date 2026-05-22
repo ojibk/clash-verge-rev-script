@@ -1,5 +1,5 @@
 /**
- *   Clash-Script 扩展脚本 · 幂等规则注入与 Firefly 精确豁免 v260522
+ *   Clash-Script 扩展脚本 · 幂等规则注入与 Firefly 精确豁免 v260523
  * 
  * ══════════════════════════ ░░ 脚本自述 ░░ ══════════════════════════
  *
@@ -24,7 +24,7 @@
  *   - 注入代理 / 直连规则
  *   - 进程级规则（需管理员权限 + TUN 模式，即 Mihomo 创建虚拟网卡接管全部流量）
  *   - 激进阻断模块（默认关闭，需谨慎开启）
- *   - Hosts 级 DNS 拦截（四种拦截子模式：黑洞型与欺骗型，由 HOSTS_MODE 选择）
+ *   - Hosts 级 DNS 覆写（四种映射子模式：黑洞型与欺骗型，由 HOSTS_MODE 选择）
  *   - 基于哨兵标记的幂等性规则写入（栈重建算法，O(N) 单次遍历，防止用户多次重新加载订阅导致本脚本注入的规则块重复追加）
  *   - 异常降级保护，详细运行日志
  *
@@ -45,8 +45,8 @@ function main(config) {
     // true  = 完全启用脚本功能。
     // false = 禁用规则注入，但仍返回含调试标记的修改版配置（仍向规则头部注入一条调试标记规则，非原样返回），详见下方 ENABLE_SCRIPT 分支说明
     //         简言之：false 时脚本不注入功能性规则，实际网络路由等同于未加载脚本；
-    //         调试标记规则使用 .invalid 保留 TLD（RFC 2606 规定永不解析，不匹配任何真实域名，不影响实际路由），
-    //         故网络行为与完全未加载脚本时相同——只是规则列表中保留一条可见的调试标记供外部识别脚本禁用状态。
+    //         调试标记规则使用 .invalid 保留 TLD（RFC 6761 规定永不解析，不匹配任何真实域名，不影响实际路由），
+    //         故网络行为与未启用脚本时相同——只是规则列表中保留一条可见的调试标记供外部识别脚本禁用状态。
     const ENABLE_SCRIPT       = true;
 
     // ──── 以下开关与运行时注入层级（allow > block > process > proxy > aggressive > direct）大致对应，
@@ -86,15 +86,15 @@ function main(config) {
                                                   // 调用 pushKeyword 传入空数组，产生无意义的空规则注入调用
                                                   //（即：开关为 true 但数组为空的极端情形）。
     const ENABLE_DIRECT       = true;            // 指定域名直连模块
-    const ENABLE_HOSTS_TRICK  = true;            // Hosts DNS 拦截模块（四种拦截子模式：黑洞型与欺骗型，由 HOSTS_MODE 选择）
+    const ENABLE_HOSTS_TRICK  = true;            // Hosts DNS 覆写模块（四种映射子模式：黑洞型与欺骗型，由 HOSTS_MODE 选择）
     // ❗ 生效前提：CVR › DNS 覆写，必须同时开启「启用 DNS」和「使用 Hosts」
-    //    两个开关缺一不可，脚本无法感知 UI 层开关状态；未开启时本模块失效（脚本仍打印成功日志，但 hosts 拦截不生效）。
+    //    两个开关缺一不可，脚本无法感知 UI 层开关状态；未开启时本模块失效（脚本仍打印成功日志，但 Hosts 覆写不生效）。
     //    注意：「使用系统 Hosts」与脚本注入的 Mihomo hosts 是两套完全独立的机制——
     //          「使用系统 Hosts」控制的是 Windows 原生 hosts 文件（C:\Windows\System32\drivers\etc\hosts），
     //          与脚本向 Mihomo 注入的 hosts 条目完全无关，保持关闭即可。
     // ❗ 脚本注入 use-hosts:true 会被 CVR UI 层覆盖，必须在设置页手动开启，脚本无法替代手动操作。
-    // ℹ️ 依赖约束：ENABLE_SCRIPT=false 时此模块强制失效（脚本提前返回，Hosts 注入不执行）；
-    //    如需关闭规则注入同时保留 Hosts 拦截，应保持 ENABLE_SCRIPT=true 并关闭各子模块开关。
+    // ℹ️ 依赖约束：ENABLE_SCRIPT=false 时此模块被跳过（脚本提前返回，Hosts 注入不执行）；
+    //    如需关闭规则注入同时保留 Hosts 覆写，应保持 ENABLE_SCRIPT=true 并关闭各子模块开关。
 
     // 💡 推荐使用 "ipv4-loopback"（当前默认值）：返回 127.0.0.1，产生 ECONNREFUSED（欺骗拦截），
     //    应用兼容性通常最好；ipv4-blackhole 阻断速度最快，但可能被部分应用归类为断网状态。
@@ -119,7 +119,7 @@ function main(config) {
 
     // ──── 典型配置组合参考（按需参照调整上方开关值；此处为说明性文字，无需操作）────
     //
-    // 【默认推荐】拦截 + Firefly 放行 + 代理 + 直连 + Hosts DNS 拦截（激进模式关闭）
+    // 【默认推荐】拦截 + Firefly 放行 + 代理 + 直连 + Hosts DNS 覆写（激进模式关闭）
     //   ENABLE_BLOCK=true  ENABLE_FIREFLY=true  ENABLE_PROCESS_RULE=true
     //   ENABLE_PROXY=true  ENABLE_DIRECT=true   ENABLE_HOSTS_TRICK=true
     //   ENABLE_AGGRESSIVE=false   HOSTS_MODE="ipv4-loopback"
@@ -158,7 +158,7 @@ function main(config) {
         console.warn("⚠️ 警告：ENABLE_FIREFLY=true 但 ENABLE_BLOCK=false");
         console.warn("   isFireflyActive 已自动降级为 false，Firefly 放行不生效");
         console.warn("   原因：Firefly 放行规则须在拦截规则之前注入方能生效；");
-        console.warn("         ENABLE_BLOCK=false 时拦截层不注入，放行规则亦无需注入（放行规则无对应拦截层可供豁免，注入无意义）。");
+        console.warn("         ENABLE_BLOCK=false 时拦截层不注入，放行规则也无需注入（放行规则无对应拦截层可供豁免，注入无意义）。");
     }
 
     // ══════════════════════ ENABLE_SCRIPT 分支 ══════════════════════
@@ -180,7 +180,7 @@ function main(config) {
     //
     // ⚠️ 哨兵格式设计为固定不变：哨兵必须是合法的 Clash 三段式规则（TYPE,VALUE,POLICY）且格式固定，
     //    清理算法依赖精确等值（===）匹配；若确需修改哨兵格式，须同步更新清理逻辑。
-    // 💡 TLD 选型：使用 RFC 6761（BCP 206，2013） 明确保留的 .invalid（无效域），而非 .local（RFC 6762 mDNS 保留域）。
+    // 💡 TLD 选型：使用 RFC 6761 明确保留的 .invalid（无效域），而非 .local（RFC 6762 mDNS 保留域）。
     //    .local 在部分 Mihomo 版本或系统级 mDNS 配置下可能触发 DNS 多播查询；
     //    .invalid 作为保留域，标准 DNS 实现不应对其解析，产生额外 DNS 流量的风险极低，更为安全。
     const _sentinelStart = "DOMAIN,START-script-sentinel-marker.invalid,DIRECT";
@@ -196,7 +196,10 @@ function main(config) {
                 stack.push(newRules.length); // 记录快照：若后续遇到匹配 END，从此处截断
                 // 孤儿 START 场景：sentinel 标记自身因 continue 被静默丢弃，不进入 newRules；
                 // 但其后至数组末尾（或下一配对 END 前）的所有规则因未触发截断，会被原样推入 newRules 并保留。
-                //（注：这些规则可能是旧注入规则而非用户订阅规则，取决于孤儿 START 出现的位置）
+                // 最坏情形：孤儿 START 恰好是上次注入区间的开头（无对应 END，上次执行意外中断所致），
+                //   其后的旧注入规则不会被截断清除，混入 newRules；
+                //   但孤儿 START 之后若存在完整的 START...END 配对，仍可被正确处理，不受孤儿影响。
+                //（此情形仅在上次运行崩溃且 finalPool.concat 赋值未完成时出现；正常执行路径两端哨兵原子写入，不产生孤儿）
                 continue;
             }
             if (rule === _sentinelEnd) {
@@ -220,7 +223,7 @@ function main(config) {
         //      (2) 在规则头部插入新的 debug-script-disabled 标记（供外部识别脚本禁用状态）
         //    因此返回的 config 与订阅原始状态有微小差异（多一条标记规则）。
         //    如需完全不修改 config 地直接返回（Passthrough），将此 if 分支体替换为 return config; 即可。
-        //    如需保留 Hosts DNS 拦截但关闭规则注入，请保持 ENABLE_SCRIPT=true，
+        //    如需保留 Hosts DNS 覆写但关闭规则注入，请保持 ENABLE_SCRIPT=true，
         //    并将 ENABLE_BLOCK / ENABLE_PROXY / ENABLE_DIRECT 等各子模块开关设为 false。
         // 精确等值匹配，与哨兵清理保持一致，避免宽泛子串误删合法规则。
         config.rules = config.rules.filter(r => r !== "DOMAIN,debug-script-disabled.marker.invalid,DIRECT");
@@ -230,7 +233,12 @@ function main(config) {
 
     console.log("=".repeat(28));
     const _startTime = Date.now();
-    const _ts = new Date(_startTime).toTimeString().slice(0, 8); // 复用 _startTime，保持日志时间戳与计时起点一致
+    // toTimeString() 格式由平台决定，部分区域设置下 slice(0,8) 截取错误；
+    // 改用本地时间方法手动构造，格式固定为 HH:MM:SS，跨引擎跨区域设置一致。
+    const _d  = new Date(_startTime);
+    const _ts = [_d.getHours(), _d.getMinutes(), _d.getSeconds()]
+        .map(n => String(n).padStart(2, "0"))
+        .join(":");
     console.log(`📊 脚本执行开始  [${_ts}]`);
     console.log("=".repeat(28));
 
@@ -276,7 +284,7 @@ function main(config) {
     // 中文排除组正则（两段结构——这是有意设计，请勿合并为统一锚定写法）：
     //   前半段：^...$  精确匹配（加 ^$ 两端锚定），覆盖"全部/全网/全用/全球/所有/默认"等独立词。
     //      → 避免「所有节点」「全局代理」等合法组名被误伤
-    //      → 「全用」：含义为"全部用途"，见于部分订阅的「全用途代理」组名，指向 DIRECT 的通配组；
+    //      → 「全用」：含义为"全部用途"，见于部分订阅的「全用途代理」组名；此类组名语义模糊，可能指向 DIRECT 也可能是代理出口，为保守起见一律排除；
     //         保留的代价极低（精确词 $ 锚定，不会误伤含「全用」的复合组名如「全用节点」）
     //   后半段：无位置锚定，子串匹配，覆盖「直连国内」「全局直连」「拒绝广告」等任意位置变体。
     //      → 「拒绝垃圾流量」含「拒绝」，被排除是有意为之——
@@ -285,7 +293,7 @@ function main(config) {
     //   ⚠️ "全局"已从此正则移出，由独立的 FALLBACK_CN_RE 负责识别（原因见下方 FALLBACK_CN_RE 及 isEligibleGroup 防回归说明）
     //   ⚠️ 已知盲区：「默认节点」等含「默认」的复合词组名不触发（精确词加 $ 锚定为设计取舍）
     //      此类指向 DIRECT 的订阅极为罕见；若遇到，可手动将 proxyGroupName 默认值改为正确组名。
-    //   ⚠️ 已知处理方式：组名恰为「全球」（仅两字，无修饰词）时被精确匹配排除（^全球$），
+    //   ⚠️ 已知限制：组名恰为「全球」（仅两字，无修饰词）时被精确匹配排除（^全球$），
     //      无警告日志，注入将进入容错路径或触发代理组排除断言中止。
     //      含「全球」的复合词（如「全球节点」）因含「节点」关键词，可进入优选策略正常被选中。
     //      纯「全球」命名极为罕见；若遇到，可手动将 proxyGroupName 默认值改为正确组名。
@@ -426,7 +434,7 @@ function main(config) {
         //    🚀（U+1F680）为 BMP 外字符，无 u 标志时作代理对匹配，现代 V8 引擎行为正确；
         //    若需严格 Unicode 语义可加 u 标志（/…/iu），当前不加亦无实际问题。
         // 不含 "global"（GLOBAL 由 FALLBACK_NAMES 单独处理），不含 "默认"（已被 EXCLUDED_CN_RE 覆盖，关键词层无需重复）。
-        const _KW_RE = /节点(?:选择)?|手动选择|选节点|选择|proxy|auto|自动|🚀|飞机|机场|线路|订阅/i;
+        const _KW_RE = /节点(?:选择)?|手动选择|选节点|proxy|auto|自动|🚀|飞机|机场|线路|订阅/i;
 
         // 预计算所有组的 cleanName，避免三轮 find 各自对同一组名重复调用 sanitizeName。
         // 对含 100+ 代理组的大型订阅，最坏情况下三轮各遍历一次，sanitizeName（_SANITIZE_RE.replace）
@@ -628,12 +636,6 @@ function main(config) {
     //    会被模板字符串静默转换，生成格式合法但语义非法的规则（如 DOMAIN-SUFFIX,null,REJECT），
     //    Mihomo 不报错但该规则永远不会命中。当前所有调用方均使用字符串字面量数组，无此风险；
     //    若将来从外部数据源动态填充，须在调用前校验元素类型。
-    // safeHostsObj：hosts / dns.hosts 字段类型校验辅助工具（与具体 Hosts 拦截逻辑解耦）。
-    // 若上游订阅将 hosts 写成数组/字符串，直接展开产生以索引为 key 的非法对象；
-    // typeof + !Array.isArray 双重验证，类型异常时安全退化为空对象。
-    // ⚠️ 不可简化为 val || {}：|| 无法拦截数组/字符串类型。
-    const safeHostsObj = val =>
-        (typeof val === "object" && val !== null && !Array.isArray(val)) ? val : {};
 
     const pushSuffix  = (domains, action, pool) => domains.forEach(d => pool.push(`DOMAIN-SUFFIX,${d},${action}`));
     const pushDomain  = (domains, action, pool) => domains.forEach(d => pool.push(`DOMAIN,${d},${action}`));
@@ -710,8 +712,8 @@ function main(config) {
         "lmlicenses.wip4.adobe.com",              // Adobe 许可证管理服务（wip4 疑似集群标识，功能已抓包确认）
         "prod.adobegenuine.com",                  // Genuine Integrity Service（正版完整性验证服务）
         "na1e.services.adobe.com",                // Genuine 服务备用
-        "adobedtm.com",                           // Adobe DTM 旧版遥测域（DTM 已于 2021 年停止维护，新版 CC 不再依赖此域）
-                                                   // 保留理由：新版无人依赖则拦截无害；若仍有旧版 CC 存量实例使用，主动拦截有防御价值。
+        // "adobedtm.com",                           // Adobe DTM 旧版遥测域（DTM 已于 2021 年停止维护，新版 CC 不再依赖此域）
+                                                   // 保留理由：新版无依赖则拦截无害；若仍有旧版 CC 存量实例使用，主动拦截有防御价值。
                                                    // 【待抓包确认】是否仍有实例调用此域未经现代验证，可酌情移除。
         "crs.cr.adobe.com",                       // License check（许可证检查）
         "cclibraries-defaults-cdn.adobe.com",     // CC Libraries 默认资源 CDN（内容分发网络）
@@ -898,7 +900,6 @@ function main(config) {
         "licensing-autodesk.com",                // 许可证服务备用域
         "api.entitlements.autodesk.com",         // 授权 API 接口
         "telemetry.autodesk.com",                // 遥测上报
-        "api.telemetry.autodesk.com",            // 遥测 API
         "usage.autodesk.com",                    // 使用统计上报
         "metric.autodesk.com",                   // 性能指标上报
         "crashreport.autodesk.com",              // 崩溃报告上传
@@ -1218,9 +1219,9 @@ function main(config) {
 
     // ────────────────────── Google / Chrome 隐私追踪 ──────────────────────
     const googleTrackSuffix = [
-        "google-analytics.com",                  // Google Analytics（谷歌统计分析）主域
+        "google-analytics.com",                  // Google Analytics（谷歌统计分析）主域。⚠️ 拦截后可能影响依赖 Google Tag Manager 的第三方网站功能。
         "analytics.google.com",                  // Google Analytics API
-        "googletagmanager.com",                  // Google Tag Manager（标签管理器）
+        "googletagmanager.com",                  // Google Tag Manager（标签管理器）。⚠️ 拦截后可能影响依赖 Google Tag Manager 的第三方网站功能。
         // ⚠️ gvt1.com 是 Google 的 CDN（内容分发网络）主域，Chrome 扩展下载 / 字体 / 浏览器更新均走此域
         // 直接拦截 gvt1.com 会导致扩展商店异常、字体加载失败、Chrome 无法更新。
         // 精确拦截已知遥测子域，放行其余 CDN 流量。
@@ -1230,7 +1231,7 @@ function main(config) {
     // ⚠️【副作用】SafeBrowsing（安全浏览）API 是 Chrome/Chromium 用于检测钓鱼网站、恶意软件分发页面的安全机制。
     //    拦截后 Chrome 将无法实时获取恶意网站列表，用户访问钓鱼/恶意页面时不再弹出红色安全警告。
     //    若安全性优先于隐私，可考虑将此关键词从拦截列表中移除。
-    const googleTrackKeyword = ["safebrowsing.google"]; // SafeBrowsing API（安全浏览接口；含隐私影响：向 Google 上报访问 URL 哈希）⚠️ 拦截后 Chrome 失去钓鱼/恶意网站检测防护，见上方说明
+    const googleTrackKeyword = ["safebrowsing.google"]; // 安全浏览接口；含隐私影响：向 Google 上报访问 URL 哈希。⚠️ 拦截后 Chrome 失去钓鱼/恶意网站检测防护，见上方说明
 
     // ──────────────────── YouTube 遥测（不影响正常播放）────────────────────
     // 使用 REJECT（立即 RST）而非 REJECT-DROP：播放器立即放弃重试，避免请求超时导致卡顿。
@@ -1315,7 +1316,7 @@ function main(config) {
         // "PROCESS-NAME,Wps.exe,REJECT",                    // ⚠️ 慎用：WPS 主进程，拦截后全部联网功能失效（包括文档云同步）
     ];
     const processProxyRules = [ // 进程代理（当前为空占位，示例见下方）
-        // 示例：修改进程名后取消注释即可——策略组名由脚本自动填入（proxyGroupName）。
+        // 示例：修改进程名后取消注释即可——策略组名由脚本自动填入（proxyGroupName），依赖前提：需确保 proxyGroupName 已赋值
         // `PROCESS-NAME,Telegram.exe,${proxyGroupName}`,
         // `PROCESS-NAME,Slack.exe,${proxyGroupName}`,
     ];
@@ -1389,6 +1390,7 @@ function main(config) {
         "DOMAIN-SUFFIX,lanzou.com,DIRECT",        // 蓝奏云主域
         "DOMAIN-SUFFIX,lanzoui.com,DIRECT",       // 蓝奏云备用域 1
         "DOMAIN-SUFFIX,lanzoux.com,DIRECT",       // 蓝奏云备用域 2
+        // 可选扩展区
         "DOMAIN-SUFFIX,masuit.com,DIRECT",        // 学习版软件站 懒得勤快
         "DOMAIN-SUFFIX,masuit.net,DIRECT",        // 学习版软件站 懒得勤快
         "DOMAIN-SUFFIX,masuit.org,DIRECT",        // 学习版软件站 懒得勤快
@@ -1397,7 +1399,7 @@ function main(config) {
         "DOMAIN-SUFFIX,mpyit.com,DIRECT",         // 殁漂遥软件分享站
         "DOMAIN-SUFFIX,25xianbao.com,DIRECT",     // 卡圈线报
         "DOMAIN-SUFFIX,dir28.com,DIRECT",         // 羊毛活动
-        // "DOMAIN-KEYWORD,amazon,DIRECT",           // 亚马逊直连（⚠️ 覆盖所有含 amazon 的域名，含 AWS；若 AWS 服务需代理，改用精确 DOMAIN-SUFFIX 规则）
+        // "DOMAIN-KEYWORD,amazon,DIRECT",           // 亚马逊直连（⚠️ 覆盖所有含 amazon 的域名，含 AWS；若 AWS 服务需代理，改用精确 DOMAIN-SUFFIX 规则或外部规则集合）
                                                    // ⚠️ 冲突依赖 LAYER_ORDER：block 层先于 direct 层命中，否则 amazon-adsystem.com 广告域会被此条规则泛匹配误放行。
         // "DOMAIN-SUFFIX,tmall.hk,DIRECT",          // 淘宝 .hk 域被兜底走代理影响商品价格加载
         // 个人扩展区
@@ -1453,7 +1455,7 @@ function main(config) {
         const layerPools = { allow: [], block: [], process: [], proxy: [], aggressive: [], direct: [] };
         // pushLayer：逐项追加，避免 push(...rules) 在规则量超过 V8 参数栈上限（~65536）时抛出 RangeError
         const pushLayer = (layer, rules) => {
-            if (!layerPools[layer]) throw new Error(`[Script] pushLayer: 未知层 '${layer}'，请检查 layerPools 键名与 LAYER_ORDER 是否一致`);
+            if (!(layer in layerPools)) throw new Error(`[Script] pushLayer: 未知层 '${layer}'，请检查 layerPools 键名与 LAYER_ORDER 是否一致`);
             for (const r of rules) layerPools[layer].push(r);
         };
 
@@ -1608,16 +1610,15 @@ function main(config) {
             console.log(`   激进模式:   ❌`);
         }
         console.log(`   直连规则:   ${ENABLE_DIRECT        ? "✅" : "❌"}`);
-        console.log(`   Hosts拦截:  ${ENABLE_HOSTS_TRICK   ? "✅ [" + HOSTS_MODE + "]" : "❌"}`);
+        console.log(`   Hosts 覆写:  ${ENABLE_HOSTS_TRICK   ? "✅ [" + HOSTS_MODE + "]" : "❌"}`);
         console.log(`   注入规则数: ${finalPool.length} 条（含首尾哨兵）`);
         console.log(`   总规则数:   ${config.rules.length} 条`);
-        console.log(`   代理组:     [${proxyGroupName}]`);
         console.log(`   耗时:       ${Date.now() - _startTime} ms`);
         console.log("=".repeat(28));
 
     } catch (err) {
         // ⚠️ 降级说明：规则注入异常时不再立即 return，让代码继续执行到下方独立的 Hosts 注入 try 块。
-        //    Hosts DNS 拦截（尤其是后门域名黑洞化）在规则注入失败时仍有独立防护价值，应尽力执行。
+        //    Hosts DNS 覆写（尤其是后门域名黑洞化）在规则注入失败时仍有独立防护价值，应尽力执行。
         // ⚠️ 降级场景的哨兵边界说明：
         //   _sentinelEnd 在 finalPool 构建阶段（LAYER_ORDER for 循环结束后）即已压入，
         //   config.rules 赋值（finalPool.concat）是单一原子操作：
@@ -1626,13 +1627,13 @@ function main(config) {
         //       且两端哨兵均已完整写入，不产生孤儿哨兵。
         //   结论：catch 块捕获的异常不会产生孤儿 START，返回的 config.rules 始终处于一致状态
         //   （赋值前为干净状态，赋值后为完整注入状态，不存在半截注入的中间状态）。
-        console.error("❌ 规则注入异常，已跳过规则注入并继续执行 Hosts 拦截（状态取决于异常发生点，见 catch 块注释）:", err);
+        console.error("❌ 规则注入异常，已跳过规则注入并继续执行 Hosts 覆写（状态取决于异常发生点，见 catch 块注释）:", err);
         console.log(`   失败耗时:   ${Date.now() - _startTime} ms`);
         // 不再 return config，继续执行到 Hosts 注入 try 块。
     }
 
     // ═══════════════ 4. Hosts 级 DNS 拦截 ═══════════════
-    //  （四种拦截子模式：黑洞型与欺骗型，由 HOSTS_MODE 选择）
+    //  （四种劫持子模式：黑洞型与欺骗型，由 HOSTS_MODE 选择）
     //
     // 【DNS 内部处理流（来源：wiki.metacubex.one/en/config/dns/diagram）】
     //
@@ -1642,7 +1643,7 @@ function main(config) {
     //     3. Fake-IP（虚假 IP，Mihomo 分配的 198.18.x.x 虚拟地址）生成 → 不在列表则分配虚拟 IP
     //     → 结论：hosts 优先级高于 fake-ip-filter
     //
-    //   Hosts 拦截生效前提：Mihomo 必须拦截到 DNS 查询才能返回拦截地址。
+    //   Hosts 覆写生效前提：Mihomo 必须拦截到 DNS 查询才能返回拦截地址。
     //
     //   系统代理模式：
     //     app → Mihomo DNS → hosts → 返回拦截地址（黑洞/欺骗，取决于 HOSTS_MODE）→ app 连接立即失败
@@ -1689,11 +1690,11 @@ function main(config) {
 
     if (ENABLE_HOSTS_TRICK) {
         // ⚠️ 此警告旨在提醒用户检查 CVR UI 设置。若已正确开启「启用 DNS」和「使用 Hosts」，可安全忽略。
-        console.warn("⚠️ Hosts DNS 拦截模块已启用，但仅在 CVR 正确开启两个前置开关时生效（见下方说明）");
-        console.warn("❗ 前提1：CVR › DNS 覆写 → 必须开启「启用 DNS」（关闭则 dns 块整体失效）");
-        console.warn("❗ 前提2：CVR › DNS 覆写 → 必须开启「使用 Hosts」");
-        console.warn("❗ 脚本注入的 use-hosts:true 会被 CVR UI 层覆盖，必须手动开启，脚本无法替代手动操作");
-        console.warn("💡 两个开关缺一不可，脚本无法检测 UI 层开关状态；未开启时仍打印成功日志，但 hosts 拦截不生效");
+        console.warn("⚠️ Hosts DNS 覆写模块已启用，但仅在 CVR 正确开启两个前置开关时生效：CVR › DNS 覆写 → 必须开启「启用 DNS」和「使用 Hosts」");
+        // console.warn("❗ 前提1：CVR › DNS 覆写 → 必须开启「启用 DNS」（关闭则 dns 块整体失效）");
+        // console.warn("❗ 前提2：CVR › DNS 覆写 → 必须开启「使用 Hosts」");
+        // console.warn("❗ 脚本注入的 use-hosts:true 会被 CVR UI 层覆盖，必须手动开启，脚本无法替代手动操作");
+        console.warn("💡 两个开关缺一不可，脚本无法检测 UI 层开关状态；未开启时仍打印成功日志，但 Hosts 覆写不生效");
         try {
 
             // modeMap 值格式：
@@ -1752,7 +1753,12 @@ function main(config) {
             // ⚠️ config.dns 可能不存在（订阅无 dns 块时为 undefined），
             //    必须先确保 dns 对象存在再操作子字段。
 
-            // safeHostsObj 定义于数据层辅助工具区（pushSuffix/pushDomain/pushKeyword 声明上方）
+            // safeHostsObj：hosts / dns.hosts 字段类型校验辅助工具，就近声明于首次使用处。
+            // 若上游订阅将 hosts 写成数组/字符串，直接展开产生以索引为 key 的非法对象；
+            // typeof + !Array.isArray 双重验证，类型异常时安全退化为空对象。
+            // ⚠️ 不可简化为 val || {}：|| 无法拦截数组/字符串类型。
+            const safeHostsObj = val =>
+                (typeof val === "object" && val !== null && !Array.isArray(val)) ? val : {};
 
             config.hosts     = { ...safeHostsObj(config.hosts),     ...customHosts };
 
@@ -1769,7 +1775,7 @@ function main(config) {
             //    将脚本注入的值覆盖。脚本无法绕过此 UI 层覆盖。
             //
             //    → 必须在 Clash Verge Rev 设置 › DNS 覆写 › 手动开启「使用 Hosts」，
-            //      Hosts DNS 拦截才能真正生效。
+            //      Hosts DNS 覆写才能真正生效。
             //
             //    注意：同页面还有「使用系统 Hosts」开关，该开关控制的是 Windows 原生 hosts 文件
             //          （C:\Windows\System32\drivers\etc\hosts），与本脚本向 Mihomo 注入的 hosts 条目
@@ -1815,19 +1821,19 @@ function main(config) {
             config.dns["fake-ip-filter"] = [...cleanExisting, ...newEntries];
 
             const targetStr = Array.isArray(target) ? target.join(" / ") : target;
-            console.log(`🛡️ Hosts DNS 拦截已注入，但生效需 CVR 开启「启用 DNS」和「使用 Hosts」。模式： [${HOSTS_MODE}] → ${targetStr}`);
-            console.log(`   拦截域名数: ${hijackDomains.length} 条`
-                + `（含 +. 新版全子域 / *. 旧版单级通配兜底 / 精确子域双重保障，覆盖全部四个后门域名）`);
+            console.log(`🛡️ Hosts DNS 覆写已写入: ${hijackDomains.length} 条，`
+                + ` | 模式: [${HOSTS_MODE}] → ${targetStr}`
+                + ` | 但生效需 CVR 开启「启用 DNS」与「使用 Hosts」。`);
             // 区分"本脚本条目已存在数"与"原列表总条目数"两个不同统计维度。
             // existingSet.size = 原 fake-ip-filter 所有条目总数（含订阅自带的非脚本条目）；
             // 本脚本条目已存在数 = hijackDomains.length - newEntries.length。
             const _alreadyIn = hijackDomains.length - newEntries.length;
-            console.log(`   实际新增数: ${newEntries.length} 条（本脚本条目已存在 ${_alreadyIn} 条，原 fake-ip-filter 共 ${existingSet.size} 条）`);
-            if (newEntries.length === hijackDomains.length && existingSet.size === 0) {
+            console.log(`   fake-ip-filter 去重后新增: ${newEntries.length} 条（注入前已有 ${_alreadyIn} 条脚本条目重合，原数量 ${existingSet.size} 条）`);
+            if (existingSet.size === 0) {
                 console.log("   （fake-ip-filter 此前为空或已被 CVR UI 清空，已完整重新写入）");
             }
         } catch (err) {
-            console.error("❌ Hosts DNS 拦截注入失败:", err);
+            console.error("❌ Hosts DNS 覆写注入失败:", err);
         }
     }
 
@@ -1945,7 +1951,10 @@ function main(config) {
  *           length= 无 splice 的数组拷贝开销）；
  *           孤儿 END（栈为空）静默跳过（不 break，继续处理后续规则）；
  *           孤儿 START 的快照留栈中无 END 匹配，其后内容已正常推入 newRules，
- *           循环结束后自然保留，无需额外处理。
+ *           循环结束后自然保留，无需额外处理；
+ *           最坏情形：孤儿 START 是上次注入区间开头（崩溃导致 END 未写入），
+ *           其后旧注入规则不被截断，但孤儿之后的完整配对仍可正确处理。
+ *           此情形仅在上次 finalPool.concat 赋值未完成时出现，正常路径不产生孤儿。
  *
  *     废弃方案(1)：filter 状态机（inSentinelBlock 标志位逐元素过滤）。
  *       致命缺陷：孤儿 START 出现时，状态机进入 inSentinelBlock=true 后，
@@ -1989,7 +1998,6 @@ function main(config) {
  *                  必须使用逻辑描述或变量名作为锚点
  *                  （如「关键词优选策略」、「最终容错选取」）
  *     - 【禁止标记】严禁在逻辑行添加动态标记（如 // Fix by XXX），保持代码无状态
- *     - 【版本隔离】逻辑变更须以注释说明变更原因，严禁原地删改已有设计说明
  *
  *   🛠️ 编程防御：
  *     - 严禁直接访问 config[n]，必须使用 ?. 或 Array.isArray() 级联校验
