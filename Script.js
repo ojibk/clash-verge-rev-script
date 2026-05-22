@@ -1,5 +1,5 @@
 /**
- *   Clash-Script 扩展脚本 · 幂等规则注入与 Firefly 精确例外 v260521
+ *   Clash-Script 扩展脚本 · 幂等规则注入与 Firefly 精确例外 v260522
  * 
  * ══════════════════════════ ░░ 脚本自述 ░░ ══════════════════════════
  *
@@ -1436,7 +1436,6 @@ function main(config) {
         // ⚠️ 激进：多服务共用内容托管域（Google Cloud Workflows / Colab / AppSheet / Adobe / Zapier / Notion / GitHub Actions 等）；
         //    拦截后所有依赖此域的服务均受影响——Colab 输出渲染、AppSheet 内容、Adobe 工作流等可能同时中断，影响面超出 Adobe 范畴。
         //    建议查阅实际流量再决定是否启用。
-        // adsk.com 旧版遥测（影响官网/插件商店，慎用）
         "DOMAIN-SUFFIX,adsk.com,REJECT-DROP",                // ⚠️ 激进：Autodesk 旧版遥测（影响官网/插件商店访问）
         "DOMAIN-KEYWORD,officecdn,REJECT-DROP",              // ⚠️ 激进：Office CDN（内容分发网络）关键词（影响 Office 更新/模板下载）
         "DOMAIN,geo.adobe.com,REJECT-DROP",                  // ⚠️ 激进：地理区域识别（影响 CC 登录）
@@ -1535,15 +1534,10 @@ function main(config) {
             // processBlockRules / processProxyRules / processDirectRules 均为同作用域 const 字面量数组，
             // 类型在声明时确定，Array.isArray 对这三个变量必为 true，添加类型检查是冗余代码；
             // 此处仅保留 length 检查防止 pushLayer 展开空数组造成无意义操作。
-            //
             // ⚠️ process 层内三个子数组的注入顺序（block > proxy > direct）构成 first-match 子优先级：
             //    同一进程名若同时出现在 processBlockRules 和 processProxyRules 中，REJECT/REJECT-DROP 先命中，代理规则被遮蔽。
-            //    例：向 processProxyRules 添加 "PROCESS-NAME,AdobeGCClient.exe,PROXY" 不会生效，
-            //    因为 processBlockRules 中的同名 REJECT-DROP 先被注入（先命中）。
-            if (processBlockRules.length  > 0) pushLayer("process", processBlockRules);
-            // processProxyRules 当前为空占位数组（示例已注释），此 length > 0 检查始终为 false，不产生任何 pushLayer 调用。
-            // 保留检查的意图：防止未来添加条目时忘记检查数组状态；与 miscSoftwareSuffix 的占位守卫保持风格一致。
-            if (processProxyRules.length  > 0) pushLayer("process", processProxyRules);
+            if (processBlockRules.length > 0) pushLayer("process", processBlockRules);
+            if (processProxyRules.length > 0) pushLayer("process", processProxyRules); // 当前为空占位数组（示例已注释），非空时自动注入。
             if (processDirectRules.length > 0) pushLayer("process", processDirectRules);
         }
 
