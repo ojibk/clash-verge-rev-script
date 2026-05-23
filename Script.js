@@ -7,19 +7,19 @@
  *     %APPDATA%\io.github.clash-verge-rev.clash-verge-rev\profiles
  *     C:\Users\Administrator\AppData\Roaming\io.github.clash-verge-rev.clash-verge-rev\profiles
  *
- *   基于哨兵标记的幂等性规则写入（栈重建算法 O(N)）
+ *   基于哨兵标记的幂等性规则写入（栈重建算法  O(N) 时间 / O(N) 空间
  *   默认模式：拦截优先 + Firefly 精确例外放行
  *     - ENABLE_FIREFLY = true：精确放行 Firefly 推理请求，其余拦截保持不变
- *     - 鉴权端点连带影响：auth / cc-api / lcs 等端点因与 Firefly 共用鉴权链路而一并放行；
+ *     - 鉴权端点必要副效应：auth / cc-api / lcs 等端点因与 Firefly 共用鉴权链路而一并放行；
  *       最终防线为 AdobeGCClient.exe → REJECT-DROP（静默丢包，需 ENABLE_PROCESS_RULE=true + TUN 模式，见风险边界）。
  *       注意：Creative Cloud.exe / CCXProcess.exe / CoreSync.exe 等进程同样
- *       访问鉴权链，进程规则仅覆盖 AdobeGCClient.exe，其余进程因依赖链考量予以必要豁免（原因见正文 §Firefly 连带影响）
+ *       访问鉴权链，进程规则仅覆盖 AdobeGCClient.exe，其余进程因依赖链考量予以必要豁免（原因见正文 §Firefly 必要副效应）
  *       （详见 adobeAuthChain 注释及设计取舍）。
  *     - 适用场景：需要使用 PS 生成式填充、Firefly 等 Adobe AI 功能
  *
  * ══════════════════════════ ░░ 功能概览 ░░ ══════════════════════════
  *
- *   - 智能识别代理策略组（多级降级，排除组，兜底组）
+ *   - 智能识别代理策略组（多级降级策略：优选组 → 兜底组 → 容错选取 → 排除并中止）
  *   - 注入拦截规则（Adobe / Corel / Autodesk 等激活 / 遥测域名）
  *   - 注入代理 / 直连规则
  *   - 进程级规则（需管理员权限 + TUN 模式，即 Mihomo 创建虚拟网卡接管全部流量）
@@ -59,7 +59,7 @@ function main(config) {
                                                   // ⚠️ 注意：此开关实际生效由下方 isFireflyActive 派生值决定，见下方声明
                                                   // ⚠️ Firefly 放行使用 proxyGroupName 作为出口，该值由下方智能识别逻辑自动确定；
                                                   //    若识别失败（全部策略均告失败），代理组排除断言将中止注入，Firefly 请求将无法放行。
-                                                  // 连带影响：auth/cc-api 等鉴权端点同时放行；
+                                                  // 必要副效应：auth/cc-api 等鉴权端点同时放行。
                                                   // 最终防线为 AdobeGCClient.exe → REJECT-DROP（仅 ENABLE_PROCESS_RULE=true + TUN 模式下有效）
     const ENABLE_PROCESS_RULE = true;            // 进程规则模块（需 TUN 模式或 Service 模式 + 管理员权限；
                                                   // TUN：Mihomo 创建虚拟网卡接管全部流量；Service 模式效果等同，区别仅在启动方式；
@@ -153,7 +153,7 @@ function main(config) {
     if (!Array.isArray(config.rules))           config.rules = [];
     if (!Array.isArray(config["proxy-groups"])) config["proxy-groups"] = [];
 
-    // 功能依赖检查：isFireflyActive 已处理依赖，此处仅记录日志供排查。
+    // 功能依赖检查：isFireflyActive 已将 ENABLE_FIREFLY 与 ENABLE_BLOCK 的依赖关系封装，此 warn 仅供调试，对运行逻辑无影响。
     if (ENABLE_FIREFLY && !ENABLE_BLOCK) {
         console.warn("⚠️ 警告：ENABLE_FIREFLY=true 但 ENABLE_BLOCK=false");
         console.warn("   isFireflyActive 已自动降级为 false，Firefly 放行不生效");
@@ -170,7 +170,7 @@ function main(config) {
     //
     // 💡【算法选型：三候选方案，实测失败用例与边界用例详见附录"哨兵清理算法"节】
     //
-    // (1) 废弃：filter 状态机——孤儿 START 将其后全部订阅规则无差别删除（不可逆数据丢失）。
+    // (1) 废弃：filter 状态机——孤儿（无匹配配对的单端哨兵） START 将其后全部订阅规则无差别删除（不可逆数据丢失）。
     //
     // (2) 废弃：while + findIndex + splice（首个END向前配对）——孤儿 END 触发 break，
     //   其后全部有效配对未处理，旧注入规则全部残留；O(P×N) 时间，每轮 splice 内存重分配。
@@ -194,7 +194,7 @@ function main(config) {
         for (const rule of config.rules) {
             if (rule === _sentinelStart) {
                 stack.push(newRules.length); // 记录快照：若后续遇到匹配 END，从此处截断
-                // 孤儿 START 场景：sentinel 标记自身因 continue 被静默丢弃，不进入 newRules；
+                // 孤儿 START 场景：_sentinelStart 自身始终不写入 newRules（无论是否孤儿）；仅记录当前 newRules.length 快照，供后续配对 END 截断使用。
                 // 但其后至数组末尾（或下一配对 END 前）的所有规则因未触发截断，会被原样推入 newRules 并保留。
                 // 最坏情形：孤儿 START 恰好是上次注入区间的开头（无对应 END，上次执行意外中断所致），
                 //   其后的旧注入规则不会被截断清除，混入 newRules；
@@ -206,7 +206,7 @@ function main(config) {
                 if (stack.length > 0) {
                     newRules.length = stack.pop(); // O(1) 截断：直接修改 length 属性，无返回数组分配；
                     // splice 每次删除均分配并返回被删元素数组（触发额外内存分配），length= 无此代价。
-                    // 注：length 缩小时 V8 仍需释放被截断元素的引用，但无 splice 的数组拷贝开销。
+                    // 注：length 缩小时 V8 将被截断元素标记为可垃圾回收（不立即释放），但无 splice 的数组拷贝开销。
                 }
                 // 孤儿 END（stack 为空）：静默跳过，忽略该 END，继续处理后续规则。
                 continue;
@@ -330,7 +330,7 @@ function main(config) {
     // ⚠️ 攻击场景：
     //    · 不可见字符（如 \u200B、\u2060、\u00AD）：视觉上与合法组名无法区分，但字符串比较失配。
     //      典型形如 "D\u2060IRECT"、"\u200B默认"、"DIR\u00ADECT"
-    //    · Bidi 覆盖控制符（如 \u202E RLO）：使组名在渲染时以 RTL（从右向左）方向排列，造成视觉欺骗（如 "DIRECT" 显示为 "TCERID"），同样绕过比较。
+    //    · Bidi 覆盖控制符（如 \u202E RLO）：使组名在渲染时以 RTL（从右向左）方向排列，字符序列本身不变，仅渲染方向被反转，造成视觉欺骗（如 "DIRECT" 显示为 "TCERID"），同样绕过比较。
     //      典型形如 "\u202EDIRECT"，支持 Bidi 渲染时显示为 TCERID
     // 清理范围（覆盖已知 Unicode Bidi（双向文本）控制符及不可见干扰字符，按码点升序排列）：
     //   \u00AD          软连字符（Soft Hyphen）
@@ -358,7 +358,7 @@ function main(config) {
     //   ⚠️ \u0009(\t) / \u000A(\n) / \u000D(\r) 不在此清理：
     //      它们是 YAML 结构字符（行终止符 / 缩进控制符）。若在此清理，含这三个字符的原始组名
     //      在识别阶段会被净化匹配，但 proxyGroupName 存储的仍是原始值；注入时 Token 断言
-    //      检测原始值，仍会拦截——识别通过、注入被拒，是预期的防御纵深，而非矛盾。
+    //      检测原始值，仍会拦截——识别通过、注入被拒，这不是纵深防御而是极端情形下的可接受失效路径。
     //      Token 断言负责在注入前对原始值实施一票否决，两层职责不重叠。
     // 定义于 main() 作用域而非 sanitizeName 函数体内部，避免每次调用 sanitizeName() 时
     // 重新求值正则字面量（字符类约 60+ 字符，每次创建新 RegExp 对象的代价在高频调用下累积不可忽略）。
@@ -585,7 +585,7 @@ function main(config) {
     //   此断言在"注入阶段"对原始值实施一票否决——
     //   Mihomo 内核按原始名称匹配策略组，注入只能使用原始名；
     //   若原始名含控制符，会破坏 Clash 规则行语法，危及整个规则文件解析。
-    //   两者不是冗余，是刻意的"宽进严出"纵深防御：识别尽量不漏选，注入绝对不破坏语法。
+    //   两者不是冗余，是刻意的"宽进严出（识别阶段宽容，注入阶段严格）"纵深防御：识别尽量不漏选，注入绝对不破坏语法。
     // proxyGroupName 存储原始值（mainGroup.name），sanitizeName 的清洗结果不用于此处。
     // 三类拒绝维度（不同攻击向量，分开说明）：
     //   · 逗号（,）：Clash 规则字段分隔符，截断规则语义——使注入的规则被解析器拆成多条非法规则。
@@ -649,9 +649,9 @@ function main(config) {
     // 路由动作由 isFireflyActive 决定：
     //   isFireflyActive=true  → pushSuffix(adobeAuthChain, proxyGroupName, layerPools.allow) → 走代理
     //   isFireflyActive=false → pushSuffix(adobeAuthChain, "REJECT",       layerPools.block) → 走拦截
-    //   两条分支覆盖相同域名集合，行为对称，单点维护，修改只需改此数组。
+    //   两条分支覆盖相同域名集合，行为对称，单一维护点，修改只需改此数组。
     //
-    // ⚠️【Firefly 连带影响】auth.services.adobe.com / cc-api-cp.adobe.io 同时承载 CC 正版验证心跳。
+    // ⚠️【Firefly 必要副效应】auth.services.adobe.com / cc-api-cp.adobe.io 同时承载 CC 正版验证心跳。
     //   isFireflyActive=true 时放行后，以下进程的鉴权请求均走代理，而进程规则仅覆盖 AdobeGCClient.exe：
     //     AdobeGCClient.exe  ← 由 processBlockRules REJECT-DROP（静默丢包，见下方说明）兜底（已覆盖）
     //     Creative Cloud.exe ← CC 桌面客户端含授权心跳（基于依赖链考量的必要豁免：心跳放行不触发重验证，TUN 进程规则本身不可靠）
@@ -684,7 +684,7 @@ function main(config) {
         //    以下域名尚无公开抓包资料确认其确切功能，但 Firefly 在实测中依赖这些端点，
         //    故默认放行。若追求最小权限，可手动将其移至 adobeSuffix（改为 REJECT）并
         //    重新测试 Firefly 功能是否正常，确认后再决定是否从本数组移除。
-        "scdown.adobe.io",                        // 【推断·可靠性存疑】基于行为推断，未经抓包验证；
+        "scdown.adobe.io",                        // 【推断·放行风险低、漏拦截风险可接受】基于行为推断，未经抓包验证；
                                                    //   scdown 可能指 Substance Cloud Download（Adobe 3D 材质库），与 Firefly 的直接关联尚无公开资料支撑。
                                                    //   若确认 Firefly 功能正常，可尝试将此条移至 adobeSuffix（改为 REJECT）并验证可用性，确认后再决定是否从本数组移除。
         "lcs-cops.adobe.io",                      // 【推断】云端授权策略，推断为 Firefly 订阅鉴权；
@@ -832,7 +832,7 @@ function main(config) {
     //    WSS 走 TCP，而 adobeUdpBlock 仅覆盖 UDP，无法拦截此类流量；
     //    目前仅有此一个已知端点，无多级子域的抓包证据，保守使用精确匹配，等待后续抓包资料支持后再评估是否扩展。
     const adobeWsDomain = [
-        "wss.adobe.io",                           // WebSocket Secure 遥测通道（新版 CC 框架）
+        "wss.adobe.io",                           // 疑为 WSS（WebSocket Secure）遥测通道，命名推断，未经抓包确认协议类型（新版 CC 框架）
     ];
 
     // 🔓 ─────────────── Firefly 生成式 AI 专属放行域名（不含鉴权链）───────────────
@@ -845,10 +845,10 @@ function main(config) {
     //   firefly-cliov2.adobe.com / clio.adobe.io / clio-prober.adobe.io /
     //   clio-assets.adobe.com / senseicore.adobe.io / senseimds.adobe.io
     //
-    // ⚠️【连带影响】鉴权链（adobeAuthChain）同时承载 CC 正版验证心跳，
+    // ⚠️【必要副效应】鉴权链（adobeAuthChain）同时承载 CC 正版验证心跳，
     //           放行后激活拦截的最终防线为 PROCESS-NAME,AdobeGCClient.exe → REJECT-DROP
     //           （需 ENABLE_PROCESS_RULE=true + TUN 模式 + 管理员权限，进程规则本身不可靠）。
-    //           其余未覆盖进程详见 adobeAuthChain 注释中的 §Firefly 连带影响。
+    //           其余未覆盖进程详见 adobeAuthChain 注释中的 §Firefly 必要副效应。
     // 关于 adobeUdpBlock 与 Firefly .adobe.io 域名的 QUIC 豁免机制：
     //   最终规则池展开顺序（由 LAYER_ORDER 决定，allow < block，与 push 调用书写顺序无关）：
     //   adobeAuthChain+adobeFireflyOnly（allow 层）→ adobeSuffix → adobeRegex → adobeUdpBlock（block 层）
@@ -1805,7 +1805,7 @@ function main(config) {
             if (!Array.isArray(config.dns["fake-ip-filter"])) {
                 config.dns["fake-ip-filter"] = [];
             }
-            // OPT-03：单次遍历同时完成归一化、去重与分类，避免双重 Set 构造开销。
+            // 【性能优化】单次遍历同时完成归一化、去重与分类，避免双重 Set 构造开销。
             // 先 trim 归一化（消除首尾空白），过滤非法条目，再用 existingSet 去重并写入 cleanExisting。
             const existingSet   = new Set();
             const cleanExisting = [];
@@ -1828,7 +1828,7 @@ function main(config) {
             // existingSet.size = 原 fake-ip-filter 所有条目总数（含订阅自带的非脚本条目）；
             // 本脚本条目已存在数 = hijackDomains.length - newEntries.length。
             const _alreadyIn = hijackDomains.length - newEntries.length;
-            console.log(`   fake-ip-filter 去重后新增: ${newEntries.length} 条（注入前已有 ${_alreadyIn} 条脚本条目重合，原数量 ${existingSet.size} 条）`);
+            console.log(`   fake-ip-filter 去重后新增: ${newEntries.length} 条（注入前已有 ${_alreadyIn} 条脚本条目重合，原列表共 ${existingSet.size} 条）`);
             if (existingSet.size === 0) {
                 console.log("   （fake-ip-filter 此前为空或已被 CVR UI 清空，已完整重新写入）");
             }
@@ -1906,7 +1906,7 @@ function main(config) {
  *      独立块注释区分「已确认 / 待抓包确认」，优先保证 Firefly 功能正常可用，而非严格遵循最小权限原则；
  *      待抓包确认后可视情况将推测项移至 adobeSuffix（改为 REJECT）。
  *
- *   💡 Firefly 连带影响（基于依赖链考量的必要豁免，原因见下）：
+ *   💡 Firefly 必要副效应（基于依赖链考量的必要豁免，原因见下）：
  *      isFireflyActive=true 时，以下进程的鉴权请求均走代理，进程规则仅覆盖 AdobeGCClient.exe：
  *        AdobeGCClient.exe  ← 由 processBlockRules REJECT-DROP 兜底（已覆盖）
  *        Creative Cloud.exe ← 含授权心跳（必要豁免）
