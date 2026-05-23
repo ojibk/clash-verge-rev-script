@@ -58,7 +58,7 @@ function main(config) {
     const ENABLE_FIREFLY      = true;            // 精确放行 Firefly 推理请求
                                                   // ⚠️ 注意：此开关实际生效由下方 isFireflyActive 派生值决定，见下方声明
                                                   // ⚠️ Firefly 放行使用 proxyGroupName 作为出口，该值由下方智能识别逻辑自动确定；
-                                                  //    若识别失败（全部策略均告失败），代理组排除断言将中止注入，Firefly 请求将无法放行。
+                                                  //    若识别失败（全部策略均告失败），代理组排除断言（见下方"代理组排除断言"定义节）将中止注入，Firefly 请求将无法放行。
                                                   // 必要副效应：auth/cc-api 等鉴权端点同时放行。
                                                   // 最终防线为 AdobeGCClient.exe → REJECT-DROP（仅 ENABLE_PROCESS_RULE=true + TUN 模式下有效）
     const ENABLE_PROCESS_RULE = true;            // 进程规则模块（需 TUN 模式或 Service 模式 + 管理员权限；
@@ -318,9 +318,10 @@ function main(config) {
 
     // 合法代理出口类型白名单（统一引用源：各轮策略均引用此常量，新增类型只需改此处）。
     // load-balance 为动态路由策略，与 url-test 同级，具备合法出口语义，纳入白名单。
-    // relay / url-latency-benchmark / smart 等非出口语义类型不在此列：
-    //   若纳入白名单，最终容错选取可能将用户流量发送至固定链路或测速专用节点，
-    //   路由行为与用户预期不符（relay 强制指定出口，url-latency-benchmark/smart 为测速工具非稳定出口）。
+    // relay / url-latency-benchmark / smart 三类类型不在此列，排除原因各异：
+    //   relay：固定节点链路转发，强制指定出口，无用户可切换的节点选择语义。
+    //   url-latency-benchmark：测速专用工具，以延迟评测为目的，不应作为流量出口组。
+    //   smart：实验性自适应选择类型（≠测速工具），出口语义依赖 Mihomo 版本，行为尚不稳定，保守排除。
     //   最终容错阶段的 _UNSUITABLE_TYPES 负责单独排除这三类类型。
     const VALID_PROXY_TYPES = ["select", "url-test", "fallback", "load-balance"];
 
@@ -353,8 +354,7 @@ function main(config) {
     //   \u007F          DEL（删除符）：C0 集末位，无合法用途。
     //   ⚠️ \u0085（NEL，Next Line）未列入：C1 控制字符，YAML 1.2 规范认定的换行符，
     //      Token 断言（注入出口）已独立覆盖（见 Token 断言 \u0085 条目）。
-    //      sanitizeName 遵循「宽进」策略，刻意不剥离此字符——识别阶段宽容，
-    //      注入出口严格拦截，两层职责有意不对称。
+    //      sanitizeName 遵循「宽进」策略，刻意不剥离此字符，识别阶段宽容，注入出口严格拦截，两层职责有意不对称。
     //   ⚠️ \u0009(\t) / \u000A(\n) / \u000D(\r) 不在此清理：
     //      它们是 YAML 结构字符（行终止符 / 缩进控制符）。若在此清理，含这三个字符的原始组名
     //      在识别阶段会被净化匹配，但 proxyGroupName 存储的仍是原始值；注入时 Token 断言
@@ -453,10 +453,12 @@ function main(config) {
             const typeOk     = VALID_PROXY_TYPES.includes(g?.type);
             const nameMatch  = _KW_RE.test(cleanName);
             const hasMany    = Array.isArray(g?.proxies) && g.proxies.length > 3;
-            // length > 3（即 ≥ 4）：排除 proxies 数组仅含极少其他组名（如 ["节点选择","自动选择"]）
-            // 的极简占位组，确保选中的组具备真实多节点切换能力。
-            // ⚠️ 注意：proxies 数组存储的是节点名称字符串；DIRECT/REJECT 是 rules 段的
-            //   策略动作关键字，不是 proxies 数组的内置条目，不会出现在此数组中。
+            // length > 3（即 ≥ 4）：排除 proxies 数组近乎为空的极简占位组
+            // （如 proxies 仅含 ["节点选择","自动选择"] 等极少条目），优先选入条目数量充足的组。
+            // ⚠️ 注意：proxies 数组可包含三类条目：底层节点名称、其他策略组名称、内置代理名称（DIRECT / REJECT）；
+            //   length > 3 衡量的是三类条目的总数，不等于底层节点计数（已知盲区见下方）。
+            //   已知盲区：全部条目均为策略组引用（无底层节点）时，阈值仍可成立，但被选中的
+            //   组仍能正常委托子组路由，实际影响极小；后续多轮兜底进一步覆盖此场景。
             const includeAll = g?.["include-all"] === true || g?.["include-all"] === "true";
             // includeAll 仅接受 boolean true 或字符串 "true"（严格等值）；
             // 数字 1 / 其他 truthy 值不触发（有意严格，避免意外匹配）。
@@ -486,7 +488,7 @@ function main(config) {
 
         // [兜底降级] 降级选取（GLOBAL/"全局" 等，优选策略全部失败时才触发）
         // ⚠️ 不能直接取首个元素，订阅第一个组可能是 DIRECT，导致本脚本注入的代理规则失效（流量直连）
-        // 保留类型过滤（与前三轮优选策略一致），防止选中非出口语义类型（relay / url-latency-benchmark / smart）。
+        // 保留类型过滤（与前三轮优选策略一致），防止选中固定链路、测速专用或实验性自适应类型（relay / url-latency-benchmark / smart）。
         if (!_mainEntry) {
             _mainEntry = _groupsPrepped.find(({ g, cleanName }) =>
                 _isFallbackGroupCore(cleanName) &&
@@ -502,13 +504,15 @@ function main(config) {
         // [最终容错选取] 安全兜底（全部前置策略失败时的最后屏障）────────────────
         // 前四轮策略（关键词/正则/类型优选 + 兜底组降级）全部失败时进入此分支。
         // 目的：在赋值 proxyGroupName="DIRECT"（→代理组排除断言中止）之前，尽力寻找可用组。
-        // 策略：仅排除非出口语义类型（relay / url-latency-benchmark / smart），其他类型均允许；
-        //   选中非理想类型（固定链路或测速工具）虽非理想，但总比中止注入、让用户完全依赖订阅原始规则要好。
+        // 策略：仅排除出口语义不适合的类型（relay / url-latency-benchmark / smart），其他类型均允许；
+        //   选中非理想类型（固定链路、测速工具或语义不稳定的实验性类型）虽非理想，但总比中止注入、让用户完全依赖订阅原始规则要好。
         //   注：load-balance 已纳入 VALID_PROXY_TYPES，不在 _UNSUITABLE_TYPES 排除列表中。
         if (!_mainEntry) {
             // [最终容错选取] 排除语义不适合做代理出口的类型（而非全部放开）
-            // relay 为固定节点链路转发，没有节点选择语义，用户无法在其界面切换节点。
-            // url-latency-benchmark 为测速工具，smart 语义尚不明确（保守排除），均排除。
+            // relay：固定节点链路转发，无节点选择语义，用户无法在其界面切换节点。
+            // url-latency-benchmark：测速专用工具，以延迟评测为目的，不应作为流量出口组。
+            // smart：实验性自适应选择类型（≠测速工具），出口语义依赖 Mihomo 版本，行为尚不稳定，保守排除。
+            //        （与上方 VALID_PROXY_TYPES 定义区 smart 描述同步；如需更新，两处须同步修改）
             // load-balance 已纳入 VALID_PROXY_TYPES（动态路由，具备合法出口语义），不再排除。
             // 注意：此处保留最低限度的类型语义过滤，而非彻底放开——彻底放开会导致 relay 等
             //        固定链路被选中，流量走预设链路而非用户期望的可切换代理，行为与预期不符。
@@ -520,7 +524,7 @@ function main(config) {
             );
             if (_mainEntry) {
                 console.error(`🚨 严重警告：关键词/正则/类型优选 + 兜底组降级全部失败，触发最终容错选取`);
-                console.error(`   已排除非出口语义类型（relay / url-latency-benchmark / smart），抓取首个合法组 [${_mainEntry.g.name}] (type: ${_mainEntry.g.type ?? "未知"})`);
+                console.error(`   已排除固定链路 / 测速专用 / 实验性自适应类型（relay / url-latency-benchmark / smart），抓取首个合法组 [${_mainEntry.g.name}] (type: ${_mainEntry.g.type ?? "未知"})`);
                 console.error(`   建议检查订阅结构是否符合关键词列表`);
             }
         }
@@ -1830,7 +1834,7 @@ function main(config) {
             const _alreadyIn = hijackDomains.length - newEntries.length;
             console.log(`   fake-ip-filter 去重后新增: ${newEntries.length} 条（注入前已有 ${_alreadyIn} 条脚本条目重合，原列表共 ${existingSet.size} 条）`);
             if (existingSet.size === 0) {
-                console.log("   （fake-ip-filter 此前为空或已被 CVR UI 清空，已完整重新写入）");
+                console.log("（fake-ip-filter 此前为空或已被 CVR UI 清空，已完整重新写入）");
             }
         } catch (err) {
             console.error("❌ Hosts DNS 覆写注入失败:", err);
@@ -1940,7 +1944,7 @@ function main(config) {
  *     [优选·正则]   正则宽松匹配           ← 次选，排除兜底组
  *     [优选·类型]   类型约束              ← 放宽数量约束
  *     [兜底降级]    兜底组选取             ← GLOBAL/"全局" 等
- *     [最终容错选取] 排除非出口语义类型（relay / url-latency-benchmark / smart），最低限度类型语义过滤
+ *     [最终容错选取] 排除固定链路、测速专用或实验性自适应类型（relay / url-latency-benchmark / smart），最低限度类型语义过滤
  *     全部失败 → proxyGroupName="DIRECT" → 代理组排除断言拦截 → 中止注入
  *   ──────────────────────────────────────────────────────────────
  *
