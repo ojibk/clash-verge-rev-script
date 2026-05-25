@@ -1,5 +1,5 @@
 /**
- *   Clash-Script 扩展脚本 · 幂等规则注入与 Firefly 精确豁免 v260524
+ *   Clash-Script 扩展脚本 · 幂等规则注入与 Firefly 精确豁免 v260525
  * 
  * ══════════════════════════ ░░ 脚本自述 ░░ ══════════════════════════
  *
@@ -43,7 +43,7 @@ function main(config) {
     // 修改后在 Clash Verge Rev（CVR，即本脚本所在的 Clash 图形前端）中重新加载订阅即可生效，无需重启。
 
     // true  = 完全启用脚本功能。
-    // false = 禁用规则注入，但仍返回含调试标记的修改版配置（仍向规则头部注入一条调试标记规则，非原样返回），详见下方 ENABLE_SCRIPT 分支说明
+    // false = 禁用规则注入，但仍返回含调试标记的修改版配置（仍向规则头部写入一条调试标记规则，非原样返回），详见下方 ENABLE_SCRIPT 分支说明
     //         简言之：false 时脚本不注入功能性规则，实际网络路由等同于未加载脚本；
     //         调试标记规则使用 .invalid 保留 TLD（RFC 6761 规定永不解析，不匹配任何真实域名，不影响实际路由），
     //         故网络行为与未启用脚本时相同——只是规则列表中保留一条可见的调试标记供外部识别脚本禁用状态。
@@ -577,7 +577,7 @@ function main(config) {
             EXCLUDED_NAMES.has(_sanitizedProxy.toUpperCase()) ||
             EXCLUDED_CN_RE.test(_sanitizedProxy)) {
             console.error(`❌ 代理组排除断言触发：proxyGroupName 解析为排除出口 [${proxyGroupName}]`);
-            console.error(`   拦截规则将等价于放行，脚本中止注入以保护安全边界`);
+            console.error(`   入规则出口语义异常，allow/proxy 层将失效，脚本中止注入以保护安全边界`);
             return config;
         }
     }
