@@ -370,7 +370,7 @@ function main(config) {
         return name.replace(_SANITIZE_RE, '').trim();
     }
 
-    // _isFallbackGroupCore：isFallbackGroup 的内部核心逻辑，接受已清洗字符串，跳过二次 sanitizeName。
+    // _isFallbackGroupCore：isFallbackGroup 的内部核心逻辑，接受已清洗字符串，避免重复 sanitizeName。
     // 命名说明：Core 表示"不含清洗步骤的核心判断"，区别于公开接口 isFallbackGroup（内部含 sanitizeName 清洗步骤）。
     // 仅供内部调用（isEligibleGroup 内部、优选策略回调中 cleanName 已清洗的场景）。
     // 设计原因：isEligibleGroup 已对 name 清洗得到 trimmed，再传入 isFallbackGroup 时，
@@ -383,7 +383,7 @@ function main(config) {
         return FALLBACK_CN_RE.test(trimmed);
     }
 
-    // _isEligibleGroupCore：isEligibleGroup 的内部核心逻辑，接受已清洗字符串，跳过二次 sanitizeName。
+    // _isEligibleGroupCore：isEligibleGroup 的内部核心逻辑，接受已清洗字符串，避免重复 sanitizeName。
     // 命名说明：Core 表示"不含清洗步骤的核心判断"，区别于公开接口 isEligibleGroup（内部含 sanitizeName 清洗步骤）。
     // 仅供内部调用（优选策略回调中 cleanName 已清洗的场景）。
     // 设计原因：与 _isFallbackGroupCore 对称——两者均接受已清洗字符串，避免在回调内部
@@ -577,7 +577,7 @@ function main(config) {
             EXCLUDED_NAMES.has(_sanitizedProxy.toUpperCase()) ||
             EXCLUDED_CN_RE.test(_sanitizedProxy)) {
             console.error(`❌ 代理组排除断言触发：proxyGroupName 解析为排除出口 [${proxyGroupName}]`);
-            console.error(`   入规则出口语义异常，allow/proxy 层将失效，脚本中止注入以保护安全边界`);
+            console.error(`   注入规则出口语义异常，allow/proxy 层将失效，脚本中止注入以保护安全边界`);
             return config;
         }
     }
@@ -1322,7 +1322,7 @@ function main(config) {
         // "PROCESS-NAME,Wps.exe,REJECT",                    // ⚠️ 慎用：WPS 主进程，拦截后全部联网功能失效（包括文档云同步）
     ];
     const processProxyRules = [ // 进程代理（当前为空占位，示例见下方）
-        // 示例：修改进程名后取消注释即可——策略组名由脚本自动填入（proxyGroupName），依赖前提：proxyGroupName  已通过代理组排除断言、Token 断言与存在性断言，此处取值为合法代理出口组名
+        // 示例：修改进程名后取消注释即可——策略组名由脚本自动填入（proxyGroupName），依赖前提：proxyGroupName 已通过代理组排除断言、Token 断言与存在性断言，此处取值为合法代理出口组名
         // `PROCESS-NAME,Telegram.exe,${proxyGroupName}`,
         // `PROCESS-NAME,Slack.exe,${proxyGroupName}`,
     ];
@@ -1696,7 +1696,7 @@ function main(config) {
 
     if (ENABLE_HOSTS_TRICK) {
         // ⚠️ 此警告旨在提醒用户检查 CVR UI 设置。若已正确开启「启用 DNS」和「使用 Hosts」，可安全忽略。
-        console.warn("⚠️ Hosts DNS 覆写模块已启用，但仅在 CVR 正确开启两个前置开关时生效：CVR › DNS 覆写 → 必须开启「启用 DNS」和「使用 Hosts」");
+        console.warn("⚠️ Hosts DNS 覆写模块已启用，但仅在 CVR 同时开启两个前置开关时生效：CVR › DNS 覆写 → 必须开启「启用 DNS」和「使用 Hosts」");
         // console.warn("❗ 前提1：CVR › DNS 覆写 → 必须开启「启用 DNS」（关闭则 dns 块整体失效）");
         // console.warn("❗ 前提2：CVR › DNS 覆写 → 必须开启「使用 Hosts」");
         // console.warn("❗ 脚本注入的 use-hosts:true 会被 CVR UI 层覆盖，必须手动开启，脚本无法替代手动操作");
@@ -1727,8 +1727,8 @@ function main(config) {
             //   *.domain → 仅匹配单级子域，不含主域和多级子域
             //   .domain  → 匹配所有多级子域，不含主域本身
             //
-            // 冗余项保留说明：新版 Mihomo 内核中，+.XXX.com 已完全包含 XXX.com 和 *.XXX.com。
-            //   精确项是为旧版内核兜底：旧版不识别 +. 语法时，*.XXX.com 覆盖单级子域，
+            // 冗余项说明：新版 Mihomo 内核中，+.XXX.com 已完全包含 XXX.com 和 *.XXX.com。
+            //   精确项是为兼容旧版内核：旧版不识别 +. 语法时，*.XXX.com 覆盖单级子域，如使用旧版内核请自行取消下方对应规则条目的注释以使之生效。
             //   XXX.com 保障主域本身。代价：内核 hosts 树略有冗余，无功能影响。
             //
             // hijackDomains 覆盖 backdoorSuffix 全部四个域名，
@@ -1736,8 +1736,8 @@ function main(config) {
             const hijackDomains = [
                 // ──── 966v26.com（有明确社区记录）────
                 "+.966v26.com",           // 主域 + 所有多级子域
-                // "966v26.com",             // 旧版内核兜底：主域精确匹配。旧版内核可能是远古版本，甚至 Clash 原版内核就支持，注释掉
-                // "*.966v26.com",           // 旧版内核兜底：单级通配符
+                // "966v26.com",             // 兼容旧版内核：主域精确匹配。旧版内核可能是远古版本，甚至 Clash 原版内核就支持，注释掉
+                // "*.966v26.com",           // 兼容旧版内核：单级通配符
                 // "api.966v26.com",         // 显式精确（双重保障核心接口）
                 // "status.966v26.com",      // 显式精确（双重保障状态接口）
                 // ──── vposy.com（知名非官方修改补丁作者域名，风险等级与 966v26.com 对等）────
