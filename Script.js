@@ -183,8 +183,8 @@ function main(config) {
     // 💡 TLD 选型：使用 RFC 6761 明确保留的 .invalid（无效域），而非 .local（RFC 6762 mDNS 保留域）。
     //    .local 在部分 Mihomo 版本或系统级 mDNS 配置下可能触发 DNS 多播查询；
     //    .invalid 作为保留域，标准 DNS 实现不应对其解析，产生额外 DNS 流量的风险极低，更为安全。
-    const _sentinelStart = "DOMAIN,START-script-sentinel-marker.invalid,DIRECT";
-    const _sentinelEnd   = "DOMAIN,END-script-sentinel-marker.invalid,DIRECT";
+    const _sentinelStart = "DOMAIN,START-script-sentinel-marker.invalid,REJECT";
+    const _sentinelEnd   = "DOMAIN,END-script-sentinel-marker.invalid,REJECT";
     {
         // 栈重建：单次遍历，O(N) 时间，O(N) 空间。
         // stack 存储每个 START 被压入时 newRules 的长度快照（即该注入区间在 newRules 中的起始偏移量）；
@@ -226,8 +226,8 @@ function main(config) {
         //    如需保留 Hosts DNS 覆写但关闭规则注入，请保持 ENABLE_SCRIPT=true，
         //    并将 ENABLE_BLOCK / ENABLE_PROXY / ENABLE_DIRECT 等各子模块开关设为 false。
         // 精确等值匹配，与哨兵清理保持一致，避免宽泛子串误删合法规则。
-        config.rules = config.rules.filter(r => r !== "DOMAIN,debug-script-disabled.marker.invalid,DIRECT");
-        config.rules.unshift("DOMAIN,debug-script-disabled.marker.invalid,DIRECT");
+        config.rules = config.rules.filter(r => r !== "DOMAIN,debug-script-disabled.marker.invalid,REJECT");
+        config.rules.unshift("DOMAIN,debug-script-disabled.marker.invalid,REJECT");
         return config;
     }
 
@@ -505,7 +505,7 @@ function main(config) {
         // 前四轮策略（关键词/正则/类型优选 + 兜底组降级）全部失败时进入此分支。
         // 目的：在赋值 proxyGroupName="DIRECT"（→代理组排除断言中止）之前，尽力寻找可用组。
         // 策略：仅排除出口语义不适合的类型（relay / url-latency-benchmark / smart），其他类型均允许；
-        //   选中非理想类型（固定链路、测速专用或实验性自适应类型）虽非理想，但总比中止注入、让用户完全依赖订阅原始规则要好。
+        //   选中非理想类型（固定链路、测速专用或实验性自适应类型）虽有所妥协，但总比中止注入、让用户完全依赖订阅原始规则要好。
         //   注：load-balance 已纳入 VALID_PROXY_TYPES，不在 _UNSUITABLE_TYPES 排除列表中。
         if (!_mainEntry) {
             // [最终容错选取] 排除语义不适合做代理出口的类型（而非全部放开）
@@ -591,7 +591,7 @@ function main(config) {
     //   若原始名含控制符，会破坏 Clash 规则行语法，危及整个规则文件解析。
     //   两者不是冗余，是刻意的"宽进严出（识别阶段宽容，注入阶段严格）"纵深防御：识别尽量不漏选，注入绝对不破坏语法。
     // proxyGroupName 存储原始值（mainGroup.name），sanitizeName 的清洗结果不用于此处。
-    // 三类拒绝维度（不同攻击向量，分开说明）：
+    // 四类拒绝维度（不同攻击向量，分开说明）：
     //   · 逗号（,）：Clash 规则字段分隔符，截断规则语义——使注入的规则被解析器拆成多条非法规则。
     //   · \u0000-\u001F / \u007F：C0 控制字符集（含结构控制符 \t/\n/\r 破坏 YAML 行边界，
     //     NUL 截断字符串解析器），不可打印，无合法组名用途。
@@ -743,8 +743,10 @@ function main(config) {
     // ⚠️ ^$ 锚定不可移除：Go regexp.MatchString 为子串匹配，若移除锚定，
     //    "abcdefgh.adobe.io.evil.com" 也会命中（子串 abcdefgh.adobe.io 满足 {8,12} 模式），
     //    导致非 adobe.io 域名被错误拦截（过拦截误伤 false positive），而非 adobe.io 的流量无辜受殃。
+    // 注意：adobestats.io 已在 adobeSuffix 以 DOMAIN-SUFFIX 全覆盖（含所有子域），
+    // 本 REGEX 在实际注入顺序下被前置 SUFFIX 规则遮蔽，功能冗余但无害；保留的意义仅为正则规则集的完整性表达。
     const _ADOBE_RAND_RE_STR      = "^[A-Za-z0-9]{8,12}\\.adobe\\.io$";       // adobe.io 随机子域（8-12位）
-    const _ADOBESTATS_RAND_RE_STR = "^[A-Za-z0-9]{10}\\.adobestats\\.io$";   // adobestats.io 随机子域（【待抓包确认】社区记录为固定10位，与 adobe.io 的 8-12 位范围不同；若实测发现其他长度，请调整此正则）
+    const _ADOBESTATS_RAND_RE_STR = "^[A-Za-z0-9]{10}\\.adobestats\\.io$";   // adobestats.io 随机子域（社区记录为固定10位，与 adobe.io 的 8-12 位范围不同；若实测发现其他长度，请调整此正则）
 
     // 正则：拦截随机子域（遥测特征：8-12 位随机字符）
     // 改用 REJECT（非 REJECT-DROP）：遥测随机子域无"拖延感知"的必要——此类域名不存在切换备用域名的自适应逻辑，
@@ -1218,7 +1220,7 @@ function main(config) {
         // ⚠️ 副作用：拦截后 Firefox 地址栏持续显示「网络连接可能受限」警告，
         //    对用户有明显可感知的负面体验（该请求本身无意义，但与遥测不同，拦截会影响 UI 显示）。
         //    如能接受上述副作用，可取消以下注释以屏蔽此探测请求：
-        // "detectportal.firefox.com",           // Firefox 网络连接检测（会产生无意义请求），拦截后 Firefox 地址栏持续报"网络连接可能受限"
+        // "detectportal.firefox.com",           // Firefox 网络连接检测（该探测本身无业务价值），但拦截后 Firefox 地址栏持续报"网络连接可能受限"
     ];
 
     // ────────────────────── Google / Chrome 隐私追踪 ──────────────────────
@@ -1320,7 +1322,7 @@ function main(config) {
         // "PROCESS-NAME,Wps.exe,REJECT",                    // ⚠️ 慎用：WPS 主进程，拦截后全部联网功能失效（包括文档云同步）
     ];
     const processProxyRules = [ // 进程代理（当前为空占位，示例见下方）
-        // 示例：修改进程名后取消注释即可——策略组名由脚本自动填入（proxyGroupName），依赖前提：需确保 proxyGroupName 已赋值
+        // 示例：修改进程名后取消注释即可——策略组名由脚本自动填入（proxyGroupName），依赖前提：proxyGroupName  已通过代理组排除断言、Token 断言与存在性断言，此处取值为合法代理出口组名
         // `PROCESS-NAME,Telegram.exe,${proxyGroupName}`,
         // `PROCESS-NAME,Slack.exe,${proxyGroupName}`,
     ];
@@ -1726,7 +1728,7 @@ function main(config) {
             //   .domain  → 匹配所有多级子域，不含主域本身
             //
             // 冗余项保留说明：新版 Mihomo 内核中，+.XXX.com 已完全包含 XXX.com 和 *.XXX.com。
-            //   保留精确项是为旧版内核兜底：旧版不识别 +. 语法时，*.XXX.com 覆盖单级子域，
+            //   精确项是为旧版内核兜底：旧版不识别 +. 语法时，*.XXX.com 覆盖单级子域，
             //   XXX.com 保障主域本身。代价：内核 hosts 树略有冗余，无功能影响。
             //
             // hijackDomains 覆盖 backdoorSuffix 全部四个域名，
