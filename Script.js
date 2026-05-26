@@ -1,5 +1,5 @@
 /**
- *   Clash-Script 扩展脚本 · 幂等规则注入与 Firefly 精确豁免 v260525
+ *   Clash-Script 扩展脚本 · 幂等规则注入与 Firefly 精确豁免 v260526
  * 
  * ══════════════════════════ ░░ 脚本自述 ░░ ══════════════════════════
  *
@@ -187,28 +187,25 @@ function main(config) {
     const _sentinelEnd   = "DOMAIN,END-script-sentinel-marker.invalid,REJECT";
     {
         // 栈重建：单次遍历，O(N) 时间，O(N) 空间。
-        // stack 存储每个 START 被压入时 newRules 的长度快照（即该注入区间在 newRules 中的起始偏移量）；
-        // 遇到匹配 END 时，将 newRules.length 截断至弹出的快照值，等效撤销整个注入区间。
+        // START 压栈时记录 newRules.length 快照；END 匹配时截断至快照，等效删除整段旧注入区块。
+        //
+        // 崩溃恢复行为（上次执行意外中断导致孤儿哨兵残留时）：
+        //   ⚠️ 两种孤儿均不抛出异常、不中断注入——残留规则可接受，中止注入不可接受。
+        //   孤儿 START（无配对 END）：START 本身不写入 newRules；其后续规则因缺少 END 触发截断，
+        //     原样推入 newRules，旧注入规则与本次新注入共存一个周期。
+        //     first-match 语义下新注入先命中，残留规则被遮蔽，路由结果正确；下次执行后自动清除。
+        //   孤儿 END（无配对 START）：静默跳过，不截断任何内容。
         const newRules = [];
         const stack    = [];
         for (const rule of config.rules) {
             if (rule === _sentinelStart) {
-                stack.push(newRules.length); // 记录快照：若后续遇到匹配 END，从此处截断
-                // 孤儿 START 场景：_sentinelStart 自身始终不写入 newRules（无论是否孤儿）；仅记录当前 newRules.length 快照，供后续配对 END 截断使用。
-                // 但其后至数组末尾（或下一配对 END 前）的所有规则因未触发截断，会被原样推入 newRules 并保留。
-                // 最坏情形：孤儿 START 恰好是上次注入区间的开头（无对应 END，上次执行意外中断所致），
-                //   其后的旧注入规则不会被截断清除，混入 newRules；
-                //   但孤儿 START 之后若存在完整的 START...END 配对，仍可被正确处理，不受孤儿影响。
-                //（此情形仅在上次运行崩溃且 finalPool.concat 赋值未完成时出现；正常执行路径两端哨兵原子写入，不产生孤儿）
+                stack.push(newRules.length);
                 continue;
             }
             if (rule === _sentinelEnd) {
                 if (stack.length > 0) {
-                    newRules.length = stack.pop(); // O(1) 截断：直接修改 length 属性，无返回数组分配；
-                    // splice 每次删除均分配并返回被删元素数组（触发额外内存分配），length= 无此代价。
-                    // 注：length 缩小时 V8 将被截断元素标记为可垃圾回收（不立即释放），但无 splice 的数组拷贝开销。
+                    newRules.length = stack.pop(); // O(1) 截断，无数组分配
                 }
-                // 孤儿 END（stack 为空）：静默跳过，忽略该 END，继续处理后续规则。
                 continue;
             }
             newRules.push(rule);
@@ -338,7 +335,7 @@ function main(config) {
     //   \u061C          ARABIC LETTER MARK（ALM，阿拉伯字母方向标记，Unicode 6.3+ Bidi 格式字符）
     //   \u200B-\u200F   零宽空格 / 零宽不连接符 / 零宽连接符 /
     //                   LRM（LEFT-TO-RIGHT MARK，左到右方向标记）/ RLM（RIGHT-TO-LEFT MARK，右到左方向标记）
-    //   \u2028-\u202E   行/段终止符 + Bidi 方向控制符（连续 7 个码点，已合并为单一范围）：
+    //   \u2028-\u202E   行/段终止符 + Bidi 方向控制符（连续 7 个码点，两大类语义；Bidi 部分细分为嵌入/弹出/覆盖三种子类型，已合并为单一范围）：
     //                   \u2028 LINE SEPARATOR / \u2029 PARAGRAPH SEPARATOR：
     //                     不可见，曾用于 JSON 注入攻击，导致字符串比较失配；
     //                   \u202A-\u202E Bidi 方向控制符：
@@ -370,56 +367,37 @@ function main(config) {
         return name.replace(_SANITIZE_RE, '').trim();
     }
 
-    // _isFallbackGroupCore：isFallbackGroup 的内部核心逻辑，接受已清洗字符串，避免重复 sanitizeName。
-    // 命名说明：Core 表示"不含清洗步骤的核心判断"，区别于公开接口 isFallbackGroup（内部含 sanitizeName 清洗步骤）。
-    // 仅供内部调用（isEligibleGroup 内部、优选策略回调中 cleanName 已清洗的场景）。
-    // 设计原因：isEligibleGroup 已对 name 清洗得到 trimmed，再传入 isFallbackGroup 时，
-    //   后者内部会再次调用 sanitizeName(trimmed)——sanitizeName 幂等但构成冗余遍历。
-    //   拆分后 isEligibleGroup 直接调用此函数，isFallbackGroup 仍保持公开接口（清洗后调用此函数）。
-    // @param {string} trimmed - 已经过 sanitizeName 清洗的组名。
+    // _isFallbackGroupCore / _isEligibleGroupCore：接受已清洗字符串，跳过二次 sanitizeName。
+    // 公开接口 isFallbackGroup / isEligibleGroup 负责清洗，再委托此二函数；
+    // _Core 变体仅供已预计算 cleanName 的内部路径使用。
+    //
+    // ⚠️ 调用顺序约束：_isEligibleGroupCore 中 _isFallbackGroupCore 必须先于
+    //    EXCLUDED_NAMES / EXCLUDED_CN_RE 检查执行——兜底组（GLOBAL/全局）须通过
+    //    isEligibleGroup 初步关卡才能在第四轮降级路径中被选中；顺序颠倒则兜底路径失效。
+    // ⚠️ 集合互斥约束：FALLBACK_NAMES 中的值不应与 EXCLUDED_NAMES 重叠——
+    //    若将 "REJECT" 等误加入 FALLBACK_NAMES，提前 return true 将旁路 EXCLUDED_NAMES 检查。
+    //    上方运行时断言（FALLBACK_NAMES ∩ EXCLUDED_NAMES）从启动时保证此约束。
     function _isFallbackGroupCore(trimmed) {
         if (!trimmed) return false;
         if (FALLBACK_NAMES.has(trimmed.toUpperCase())) return true;
         return FALLBACK_CN_RE.test(trimmed);
     }
 
-    // _isEligibleGroupCore：isEligibleGroup 的内部核心逻辑，接受已清洗字符串，避免重复 sanitizeName。
-    // 命名说明：Core 表示"不含清洗步骤的核心判断"，区别于公开接口 isEligibleGroup（内部含 sanitizeName 清洗步骤）。
-    // 仅供内部调用（优选策略回调中 cleanName 已清洗的场景）。
-    // 设计原因：与 _isFallbackGroupCore 对称——两者均接受已清洗字符串，避免在回调内部
-    //   对已清洗的 cleanName 再次执行 sanitizeName 正则遍历（幂等但冗余）。
-    // @param {string} trimmed - 已经过 sanitizeName 清洗的组名。
     function _isEligibleGroupCore(trimmed) {
         if (!trimmed) return false;
-        // ⚠️ 此行必须置于 EXCLUDED_CN_RE 检查之前（防回归）：
-        //    若将来"全局"被误加回 EXCLUDED_CN_RE，此处提前返回 true 仍能确保兜底组正确通过，
-        //    而不被后续正则错误拦截。
-        // ⚠️ 隐式约束：FALLBACK_NAMES 中的值不应与 EXCLUDED_NAMES 重叠——
-        //    若将 "REJECT" 等误加入 FALLBACK_NAMES，此处提前返回 true 将旁路 EXCLUDED_NAMES 检查，
-        //    使排除词被错误视为合法兜底组。维护时须确保两个集合互不交叉。
         if (_isFallbackGroupCore(trimmed)) return true;
         if (EXCLUDED_NAMES.has(trimmed.toUpperCase())) return false;
         if (EXCLUDED_CN_RE.test(trimmed)) return false;
         return true;
     }
 
-    // isEligibleGroup：判断组名是否有入选资格（未被明确排除）
-    // 💡 语义分层：isEligibleGroup("全局") 返回 true，但前三轮优选策略内部用 !isFallbackGroup()
-    //   二次过滤，"全局"仍被排出优选池，降至兜底降级策略才被选中。
-    //   isEligibleGroup 的语义是"有入选资格"（未被明确排除），而非"适合作为代理出口"。
-    // 设计要点（防回归）：
-    //   (1) isEligibleGroup 对兜底组（GLOBAL/全局）返回 true（通过初步关卡），
-    //      但前三轮优选策略内部有 !isFallbackGroup 二次过滤，兜底组在前三轮实际不会被选中。
-    //   (2) ⚠️ "全局"已从 EXCLUDED_CN_RE 移出，断言不再错误拦截合法选中的兜底组。
-    //      若将来有人把"全局"重新加回 EXCLUDED_CN_RE，兜底路径将完全失效——
-    //      「将"全局"移出 EXCLUDED_CN_RE」与「代理组排除断言允许兜底组通过」，两个条件缺一不可。
+    // isEligibleGroup("全局") 返回 true（兜底组有入选资格），但前三轮优选策略以 !isFallbackGroup
+    // 二次过滤，"全局"须降至第四轮才被选中。"有资格"≠"优先选中"。
     function isEligibleGroup(name) {
-        // 公开接口：清洗原始输入，再委托 _isEligibleGroupCore 核心判断。
         return _isEligibleGroupCore(sanitizeName(name));
     }
 
     function isFallbackGroup(name) {
-        // 公开接口：负责清洗原始输入，再调用内部核心逻辑。
         return _isFallbackGroupCore(sanitizeName(name));
     }
 
@@ -577,7 +555,7 @@ function main(config) {
             EXCLUDED_NAMES.has(_sanitizedProxy.toUpperCase()) ||
             EXCLUDED_CN_RE.test(_sanitizedProxy)) {
             console.error(`❌ 代理组排除断言触发：proxyGroupName 解析为排除出口 [${proxyGroupName}]`);
-            console.error(`   注入规则出口语义异常，allow/proxy 层将失效，脚本中止注入以保护安全边界`);
+            console.error(`   注入出口目标解析为排除项，allow/proxy 层路由将失效，脚本中止注入以保护配置安全边界`);
             return config;
         }
     }
@@ -1403,6 +1381,7 @@ function main(config) {
         "DOMAIN-SUFFIX,423down.com,DIRECT",       // 知名绿色软件站
         "DOMAIN-SUFFIX,ghxi.com,DIRECT",          // 果核剥壳（绿色软件站）
         "DOMAIN-SUFFIX,mpyit.com,DIRECT",         // 殁漂遥软件分享站
+        "DOMAIN-SUFFIX,apphot.cc,DIRECT",         // App热（原心海e站）
         "DOMAIN-SUFFIX,25xianbao.com,DIRECT",     // 卡圈线报
         "DOMAIN-SUFFIX,dir28.com,DIRECT",         // 羊毛活动
         // "DOMAIN-KEYWORD,amazon,DIRECT",           // 亚马逊直连（⚠️ 覆盖所有含 amazon 的域名，含 AWS；若 AWS 服务需代理，改用精确 DOMAIN-SUFFIX 规则或外部规则集合）
@@ -1475,9 +1454,20 @@ function main(config) {
             } else {
                 // 本分支仅在 ENABLE_BLOCK=true && ENABLE_FIREFLY=false（即 isFireflyActive=false）时执行。
                 // 注意：ENABLE_BLOCK=false 时外层 if (ENABLE_BLOCK) 整体不进入，
-                //       adobeAuthChain 既不走 allow 层（放行）也不走 block 层（拦截），
+                //       adobeAuthChain / adobeFireflyOnly 既不走 allow 层也不走 block 层，
                 //       本分支（及上方 if 分支）均不执行。
-                pushSuffix(adobeAuthChain, "REJECT", layerPools.block);
+                // ⚠️ adobeFireflyOnly 须在此处同步拦截（不可省略）：
+                //    isFireflyActive=false 时 adobeFireflyOnly 未被 allow 层放行，
+                //    且其域名不在 adobeSuffix / adobeRegex 的覆盖范围内：
+                //      · clio.adobe.io / firefly.adobe.io（位数过短，不满足 {8,12}）
+                //      · firefly.adobe.com / clio-assets.adobe.com 等（TLD 为 .com，adobeRegex 仅覆盖 .io）
+                //      · firefly-api.adobe.io / clio-prober.adobe.io（含连字符，不满足 [A-Za-z0-9]{8,12}）
+                //    若不显式注入，上述 Firefly 推理端点将落入 MATCH 兜底策略（可能走直连），
+                //    背离「关闭 ENABLE_FIREFLY = 禁用 Firefly 功能」的设计意图。
+                //    （senseicore / senseimds 恰好满足 adobeRegex 的 10/9 位条件，已被兜底覆盖；
+                //     但其余七条需此处显式处理，不可依赖正则侥幸命中。）
+                pushSuffix(adobeAuthChain,   "REJECT", layerPools.block);
+                pushSuffix(adobeFireflyOnly, "REJECT", layerPools.block);
             }
             // Adobe（遥测/授权域改用 REJECT，软件立即进入离线模式，避免启动卡顿）
             pushSuffix(adobeSuffix, "REJECT", layerPools.block);
@@ -1529,12 +1519,13 @@ function main(config) {
         if (ENABLE_PROCESS_RULE) {
             // processBlockRules / processProxyRules / processDirectRules 均为同作用域 const 字面量数组，
             // 类型在声明时确定，Array.isArray 对这三个变量必为 true，添加类型检查是冗余代码；
-            // 此处仅保留 length 检查防止 pushLayer 展开空数组造成无意义操作。
+            // pushLayer 内部为 for...of 迭代，对空数组零次迭代（no-op），无需 length 守卫，
+            // 与 pushSuffix/pushDomain 处理原则一致。
             // ⚠️ process 层内三个子数组的注入顺序（block > proxy > direct）构成 first-match 子优先级：
             //    同一进程名若同时出现在 processBlockRules 和 processProxyRules 中，REJECT/REJECT-DROP 先命中，代理规则被遮蔽。
-            if (processBlockRules.length > 0) pushLayer("process", processBlockRules);
-            if (processProxyRules.length > 0) pushLayer("process", processProxyRules); // 当前为空占位数组（示例已注释），非空时自动注入。
-            if (processDirectRules.length > 0) pushLayer("process", processDirectRules);
+            pushLayer("process", processBlockRules);
+            pushLayer("process", processProxyRules); // 当前为空占位数组（示例已注释），非空时自动注入。
+            pushLayer("process", processDirectRules);
         }
 
         if (ENABLE_PROXY) {
@@ -1611,6 +1602,7 @@ function main(config) {
             console.warn(`   激进模式:   ⚠️ 已开启`);
             console.warn(`   ⚠️ 激进模式已开启，可能导致以下服务不可用：`);
             console.warn(`      adobe.io（插件市场/字体）、adsk.com（Autodesk 官网）、`);
+            console.warn(`      accounts.autodesk.com（Autodesk 登录）、entitlement.autodesk.com（Autodesk 授权）、`);
             console.warn(`      officecdn（Office 更新/模板）、ieonline.microsoft.com（ActiveX/旧版 OA）`);
         } else {
             console.log(`   激进模式:   ❌`);
