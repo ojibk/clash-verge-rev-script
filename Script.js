@@ -725,6 +725,7 @@ function main(config) {
         "sstats.adobe.com",                       // 实时统计上报（新版 CC 框架）
         "entitlementauthz.adobe.com",             // 授权（Authorization）验证服务（authz 为 authorization 缩写，2025 年新增）
         "assets.entitlement.adobe.com",           // 授权资产校验（2025 年新增）
+        "telemetry.adobe.com",                    // Adobe 遥测的另一入口，在部分 CC 版本抓包中出现
     ];
 
     // ──── 随机子域正则（统一引用源）—— adobeRegex 与 adobeUdpBlock 均引用此变量，禁止各自硬编码，修改只需改此处 ────
@@ -748,7 +749,7 @@ function main(config) {
         //      用户表现为 PS Neural Filters / Select Subject 等依赖 Sensei 的 AI 功能立即报错，
         //      而非卡死 15–30s——改 REJECT 后用户可快速判断为网络拦截而非软件 bug。
         //      ❗【待抓包确认】若确认 senseicore/senseimds 同时服务非 Firefly 的 PS AI 功能，
-        //      建议将其显式加入 adobeFireflyOnly（精确放行）或 adobeSuffix（改为 REJECT）。
+        //      建议将其显式加入 adobeFireflyOnly（精确放行走代理）或 adobeSuffix（以精确 DOMAIN-SUFFIX 替代当前 REGEX 覆盖，动作不变仍为 REJECT）
         `DOMAIN-REGEX,${_ADOBESTATS_RAND_RE_STR},REJECT`,
     ];
 
@@ -1123,9 +1124,8 @@ function main(config) {
         "toptips.qq.com",                        // QQ 弹窗提示推送
         "minibrowser.qq.com",                    // QQ 内置迷你浏览器广告
         // 阿里 / 友盟。
-        // ⚠️【副作用】umeng.com 为大量国内正规 App 集成的友盟 SDK（统计分析）主域，
-        //    拦截后这些 App 首次启动可能因初始化统计失败而出现功能异常或卡顿。
-        //    若发现特定软件启动异常，可考虑临时豁免此条（注释掉该行并重载订阅）。
+        // ⚠️【副作用】umeng.com 为大量国内正规 App 集成的友盟 SDK（统计分析）和友盟推送共用此主域，
+        //    拦截后可能导致大量国产 App 的推送通知和统计初始化同时失效，影响面较宽。若发现特定软件启动异常，可考虑临时豁免此条（注释掉该行并重载订阅）。
         "umeng.com",                             // 友盟统计 SDK 主域（⚠️ 副作用：部分正规 App 依赖此域初始化，见上方说明）
         "umengcloud.com",                        // 友盟云端统计
         "alimama.com",                           // 阿里妈妈广告联盟
@@ -1283,20 +1283,18 @@ function main(config) {
     //    是唯一有效的域名无关进程级拦截手段（路径A 下 DOMAIN 规则仍生效，此为附加纵深）。
     const processBlockRules = [ // 进程拦截
         // ──── 正版验证类：保留 REJECT-DROP（让软件超时等待，不快速切换备用链路）────
-        // ──── 功能上可归并为单条全流量 REJECT-DROP，但出于日志可观测性保留三条────
-        //      （QUIC 443 / 普通 UDP / TCP 分别命中不同规则，便于按流量类型排查；
-        //       若追求极简可安全移除前两条，仅保留全流量规则，但会损失流量类型的日志区分度）
         // AND 条件书写顺序按代价从低到高排列（设计意图：期望内核能够尽早排除低代价条件后跳过高代价求值）：
         // NETWORK（读包头）→ DST-PORT（整数比较）→ PROCESS-NAME（查系统进程表）
         // 实际求值顺序依赖 Mihomo 内核实现，此处为书写规范而非内核行为保证。
         // first-match 语义下：
         //   QUIC 443 规则是全 UDP 规则的子集，是全流量规则的子集；三条动作完全相同（全部 REJECT-DROP），
-        //   功能上等价于只保留全流量规则。
+        //   功能上等价于只保留全流量规则。QUIC 443 / 普通 UDP / TCP 分别命中不同规则，便于按流量类型排查；
         //   保留 QUIC 443 / 全 UDP 两条仅为明确表达流量类型覆盖意图，非功能必要。
-        //   若追求极简，可安全移除前两条，仅保留全流量 REJECT-DROP。
+        //   若追求极简，可安全移除前两条，仅保留全流量规则，但会损失流量类型的日志区分度
         "AND,((NETWORK,UDP),(DST-PORT,443),(PROCESS-NAME,AdobeGCClient.exe)),REJECT-DROP", // 端口条件可能加快匹配（内核短路求值）
         "AND,((NETWORK,UDP),(PROCESS-NAME,AdobeGCClient.exe)),REJECT-DROP",
         "PROCESS-NAME,AdobeGCClient.exe,REJECT-DROP",        // Adobe 正版验证（最重要）
+        "PROCESS-NAME,AdobeIPCBroker.exe,REJECT-DROP",       // 进程间通信代理，CC 各组件通过此进程转发激活验证请求，在新版 CC（2023+）中承担部分鉴权通信，基于架构推断而非抓包
         "PROCESS-NAME,AdskLicensingService.exe,REJECT-DROP", // Autodesk 许可验证
         "PROCESS-NAME,AdskAccess.exe,REJECT-DROP",           // Autodesk 访问控制服务
         "PROCESS-NAME,AdskIdentityManager.exe,REJECT-DROP",  // Autodesk 身份认证管理器
