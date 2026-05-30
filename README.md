@@ -9,12 +9,12 @@
  *
  *   基于哨兵标记的幂等性规则清理与注入（栈重建：O(N) 时间/空间）
  *   默认模式：拦截优先 + Firefly 精确例外放行
- *     - ENABLE_FIREFLY = true：精确放行 Firefly 推理请求，保留其他 Adobe 遥测/激活域名的拦截行为
+ *     - ENABLE_FIREFLY = true：精确放行 Firefly 推理请求，保留其他 Adobe 遥测/激活域名的拦截行为。
  *     - Firefly 依赖端点必要副作用：auth / cc-api / lcs 等端点因 Firefly 功能依赖而一并放行；
  *       最终防线为 AdobeGCClient.exe → REJECT-DROP（需 ENABLE_PROCESS_RULE=true + TUN 模式，见风险边界），另还需配置文件的 find-process-mode 参数启用获取进程信息。
  *       注意：Creative Cloud.exe / CCXProcess.exe / CoreSync.exe 等进程同样访问这些端点，
  *       进程规则仅覆盖 AdobeGCClient.exe，其余进程因依赖链考量予以必要豁免（原因见正文 Firefly 必要副作用、详见 adobeFireflyDeps 注释及设计取舍）。
- *     - 适用场景：需要使用 PS 生成式填充、Firefly 等 Adobe AI 功能
+ *     - 适用场景：需要使用 Photoshop 生成式填充、Firefly 等 Adobe AI 功能
  *
  * ══════════════════════════ ░░ 功能概览 ░░ ══════════════════════════
  *
@@ -250,7 +250,7 @@ function main(config) {
     //      → 「全用」：含义为"全部用途"，见于部分订阅的「全用途代理」组名；此类组名语义模糊，可能配置为 DIRECT 直连出口，也可能是真实代理出口，为保守起见一律排除；
     //         保留的代价极低（精确词 $ 锚定，不会误伤含「全用」的复合组名如「全用节点」）
     //   后半段：无位置锚定，子串匹配，覆盖「直连国内」「全局直连」「拒绝广告」等任意位置变体。
-    //      → 「拒绝垃圾流量」含「拒绝」，被排除是有意为之—，根据命名惯例，名称中含「拒绝」的代理组通常指向 REJECT 出口；
+    //      → 「拒绝垃圾流量」含「拒绝」，被排除是有意为之，根据命名惯例，名称中含「拒绝」的代理组通常指向 REJECT 出口；
     //        将其用作代理路由出口将导致所有流量被拒绝，此处保守排除以防路由失效。
     //   ⚠️ "全局"已从此正则移出，由独立的 FALLBACK_CN_RE 负责识别（原因见下方 FALLBACK_CN_RE 及 isEligibleGroup 防回归说明）。
     //   ⚠️ 已知局限：后半段无位置锚点，采用子串匹配。若代理组命名为「非直连节点」、「不拒绝广告」等包含否定前缀的复合词，会因包含「直连」或「拒绝」子串而被错误排除。
@@ -739,7 +739,7 @@ function main(config) {
     //           放行后激活拦截的最终防线为 PROCESS-NAME,AdobeGCClient.exe → REJECT-DROP（需 ENABLE_PROCESS_RULE=true + TUN 模式 + 管理员权限，进程规则本身不可靠）。
     //           其余未覆盖进程详见 adobeFireflyDeps 注释中的 Firefly 必要副作用。
     // 关于 adobeUdpBlock 与 Firefly .adobe.io 域名的 QUIC 豁免机制：
-    //   最终规则池展开顺序（由 LAYER_ORDER 决定，allow < block，与 push 调用书写顺序无关）：
+    //   最终规则池展开顺序（由 LAYER_ORDER 决定，allow → block，与 push 调用书写顺序无关）：
     //   adobeFireflyDeps+adobeFireflyOnly（allow 层）→ adobeSuffix → adobeRegex → adobeUdpBlock（block 层）
     //   isFireflyActive=true 时，allow 层的精确 DOMAIN-SUFFIX 规则（如
     //   firefly-api.adobe.io / clio.adobe.io 等）已在 adobeUdpBlock 之前入 pool。
@@ -1142,7 +1142,7 @@ function main(config) {
     // ─────── 关键词兜底（⚠️ 默认关闭：误伤面较大，2025-2026 年特征已严重泛化）───────
     // telemetry/analytics/stats/metrics 已出现在大量合法 CDN 和第三方服务域名中。例：video-stats.video.google.com / metrics.cloudflare.com / cdn.telemetry-static.com
     // 如需启用，建议仅保留最精确的词并放到所有具体规则之后。启用：将顶部配置区 ENABLE_GLOBAL_KEYWORD_BLOCK 改为 true；
-    // 关闭时：三元表达式直接赋值空数组 []，后续 if (globalKeyword.length > 0)判断为 false，pushKeyword 不会被调用——这是一次完整的求值，而非短路。  
+    // 关闭时：三元表达式直接赋值空数组 []，后续 if (globalKeyword.length > 0) 判断为 false，pushKeyword 不会被调用——这是一次完整的求值，而非短路。
     // length > 0 守卫的实际意义：仅防御「ENABLE_GLOBAL_KEYWORD_BLOCK=true 但三元表达式被意外改写导致数组为空」的极端情形；
     //   当前实现下此守卫永远不触发（开关为 true 时数组恒为四元素，永远非空）。pushKeyword 对空数组本身也是零次迭代（no-op），故守卫是冗余的，保留仅为防御未来改动意外清空数组。
     const globalKeyword = ENABLE_GLOBAL_KEYWORD_BLOCK
@@ -1336,7 +1336,7 @@ function main(config) {
         };
 
         if (ENABLE_BLOCK) {
-                // ──── Firefly 路由：isFireflyActive 决定 adobeFireflyDeps / adobeFireflyOnly 的注入层与动作 ────
+               // ──── Firefly 路由：isFireflyActive 决定 adobeFireflyDeps / adobeFireflyOnly 的注入层与动作 ────
                // isFireflyActive=true  → allow 层走代理（first-match 保证先于 adobeSuffix REJECT 命中）
                // isFireflyActive=false → block 层走拦截（ENABLE_BLOCK=true && ENABLE_FIREFLY=false 时此路径生效；
                //   ENABLE_BLOCK=false 时最外层 if 整体跳过，此代码段不执行）
@@ -1394,9 +1394,7 @@ function main(config) {
             // pushKeyword(youtubeKeyword, "REJECT", layerPools.block); //该注入逻辑区块的注释状态必须与被调用的数据层变量行一致（两处必须同步）
             // 通用广告联盟。
             pushSuffix(genericAdSuffix, "REJECT", layerPools.block);
-            if (globalKeyword.length > 0) {  // length > 0 守卫：空数组时 pushKeyword 无操作，守卫仅避免无意义的函数调用
-                pushKeyword(globalKeyword, "REJECT", layerPools.block);
-            }
+            pushKeyword(globalKeyword, "REJECT", layerPools.block);
         }
 
         if (ENABLE_PROCESS_RULE) {
@@ -1445,14 +1443,22 @@ function main(config) {
         // ⚠️ LAYER_ORDER 顺序 = first-match 策略优先级，禁止随意调整，两类典型错误：
         //    危险示例1：将 "aggressive" 移至 "allow" 之前，adobe.io 通配 REJECT-DROP 先于 Firefly 精确放行命中，推理请求被错误拦截。
         //    危险示例2：将 "direct" 移至 "aggressive" 之前，父域 autodesk.com,DIRECT 先命中，子域 accounts.autodesk.com,REJECT-DROP 等激进规则将永久被父域规则遮蔽。
-        //    插入/删除层级时只需修改 LAYER_ORDER，finalPool 构建逻辑无需改动。
+        //    插入/删除层级时，需在 LAYER_ORDER 和 layerPools 两处同步修改（见上方约束说明）；finalPool 的 for 循环本身无需改动。
         const LAYER_ORDER = Object.freeze(["allow", "block", "process", "proxy", "aggressive", "direct"]);
 
-        // 启动断言：验证 LAYER_ORDER 与 layerPools 键名一致性
+        // 启动断言：双向一致性检查，验证 LAYER_ORDER 与 layerPools 键名一致性
+        const _orderSet = new Set(LAYER_ORDER);
+        // 原向检查：LAYER_ORDER → layerPools（防止 LAYER_ORDER 有键但 layerPools 无对应键）
         for (const k of LAYER_ORDER) {
             if (!(k in layerPools))
                 throw new Error(`[Script] LAYER_ORDER 键 '${k}' 在 layerPools 中不存在`);
         }
+        // 反向检查：layerPools → LAYER_ORDER（防止 layerPools 有键但未列入 LAYER_ORDER 导致规则静默丢弃）
+        for (const k of Object.keys(layerPools)) {
+            if (!_orderSet.has(k))
+                throw new Error(`[Script] layerPools 键 '${k}' 不在 LAYER_ORDER 中，该层规则将被静默丢弃`);
+        }
+
 
         const finalPool = [_sentinelStart];
         // 按 LAYER_ORDER 顺序展开各层，单次迭代用 push(r) 规避大型数组 push(...arr) 的 RangeError。
@@ -1512,7 +1518,7 @@ function main(config) {
         //       且两端哨兵均已完整写入，不产生孤儿哨兵。
         //   结论：catch 块捕获的异常不会产生孤儿 START，返回的 config.rules 始终处于一致状态
         //   （赋值前为干净状态，赋值后为完整注入状态，不存在半截注入的中间状态）。
-        console.error("❌ 规则注入阶段异常，视异常发生点规则可能已注入或未注入（详见 catch 块注释），继续执行 Hosts 覆写:", err);
+        console.error("❌ 规则注入阶段异常（config.rules 处于一致状态：赋值前=未写入，赋值后=已完整写入，无半写入），继续执行 Hosts 覆写:", err);
         console.log(`   失败耗时:   ${Date.now() - _startTime} ms`);
         // 不再 return config，继续执行到 Hosts 注入 try 块。
     }
