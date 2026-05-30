@@ -1,3 +1,5 @@
+完美封版，后续维护转移至 https://github.com/ojibk/clash-verge-rev-Script
+
 /**
  *   Clash-Script 全局扩展脚本 · 幂等性规则清理与注入（Firefly 精确豁免版）v260530
  * 
