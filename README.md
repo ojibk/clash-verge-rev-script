@@ -1,4 +1,4 @@
-**完美封版，后续维护迁移至 https://github.com/ojibk/Clash-Script_Merge**
+**封版不再更新，后续维护迁移至 https://github.com/ojibk/Clash-Script_Merge**
 
 /**
  *   Clash-Script 全局扩展脚本 · 幂等性规则清理与注入（Firefly 精确豁免版）v260531
@@ -12,10 +12,10 @@
  *   基于哨兵标记的幂等性规则清理与注入（栈重建：O(N) 时间/空间）
  *   默认模式：拦截优先 + Firefly 精确例外放行
  *     - ENABLE_FIREFLY = true：精确放行 Firefly 推理请求，保留其他 Adobe 遥测/激活域名的拦截行为。
- *     - Firefly 依赖端点必要副作用：auth / cc-api / lcs 等端点因 Firefly 功能依赖而一并放行；
+ *     - Firefly 依赖端点必要妥协：auth / cc-api / lcs 等端点因 Firefly 功能依赖而一并放行；
  *       最终防线为 AdobeGCClient.exe → REJECT-DROP（需 ENABLE_PROCESS_RULE=true + TUN 模式，见风险边界），另还需配置文件的 find-process-mode 参数启用获取进程信息。
  *       注意：Creative Cloud.exe / CCXProcess.exe / CoreSync.exe 等进程同样访问这些端点，
- *       进程规则仅覆盖 AdobeGCClient.exe，其余进程因依赖链考量予以必要豁免（原因见正文 Firefly 必要副作用、详见 adobeFireflyDeps 注释及设计取舍）。
+ *       进程规则仅覆盖 AdobeGCClient.exe，其余进程因依赖链考量予以必要豁免（原因见正文 Firefly 必要妥协、详见 adobeFireflyDeps 注释及设计取舍）。
  *     - 适用场景：需要使用 Photoshop 生成式填充、Firefly 等 Adobe AI 功能
  *
  * ══════════════════════════ ░░ 功能概览 ░░ ══════════════════════════
@@ -59,7 +59,7 @@ function main(config) {
     const ENABLE_FIREFLY      = true;            // 精确放行 Adobe Firefly AI 生成式请求。启用放行规则需（ENABLE_BLOCK=true）对应拦截层以供豁免。
                                                   // ⚠️ 注意：此开关实际生效由下方 isFireflyActive 派生值决定，见下方声明
                                                   // ⚠️ Firefly 放行出口为 proxyGroupName，该值由下方智能识别逻辑自动确定；若识别失败（全部策略均告失败），
-                                                  //    脚本直接 return config 中止注入，Firefly 请求将无法放行。必要副作用：auth/cc-api 等鉴权端点同时放行。
+                                                  //    脚本直接 return config 中止注入，Firefly 请求将无法放行。必要妥协：auth/cc-api 等鉴权端点同时放行。
                                                   // 最终防线为 AdobeGCClient.exe → REJECT-DROP（仅 ENABLE_PROCESS_RULE=true + TUN 模式下有效）
     const ENABLE_PROCESS_RULE = true;            // 进程规则模块（需 TUN 模式或 Service 模式 + 管理员权限；另还需配置文件的 find-process-mode 参数启用获取进程信息）。
                                                   // TUN：Mihomo 创建虚拟网卡接管全部流量；Service 模式效果等同，区别仅在启动方式；两种模式均透明代理全流量，系统代理模式下无效。
@@ -542,7 +542,7 @@ function main(config) {
     //   isFireflyActive=false → pushSuffix(adobeFireflyDeps, "REJECT",       layerPools.block) → 走拦截
     //   两条分支覆盖相同域名集合，行为对称，单一维护点，修改只需改此数组。
     //
-    // ⚠️【Firefly 必要副作用】auth.services.adobe.com / cc-api-cp.adobe.io 同时承载 CC 正版验证心跳。
+    // ⚠️【Firefly 必要妥协】auth.services.adobe.com / cc-api-cp.adobe.io 同时承载 CC 正版验证心跳。
     //   isFireflyActive=true 时放行后，以下进程的鉴权请求均走代理，而进程规则仅覆盖 AdobeGCClient.exe：
     //     AdobeGCClient.exe  ← 由 processBlockRules REJECT-DROP（静默丢包，见下方说明）兜底（已覆盖）
     //     Creative Cloud.exe ← CC 桌面客户端含授权心跳（基于依赖链考量的必要豁免：心跳放行不触发重验证，TUN 进程规则本身不可靠）
@@ -724,9 +724,9 @@ function main(config) {
     //   firefly-cliov2.adobe.com / clio.adobe.io / clio-prober.adobe.io /
     //   clio-assets.adobe.com / senseicore.adobe.io / senseimds.adobe.io
     //
-    // ⚠️【必要副作用】adobeFireflyDeps 同时承载 CC 正版验证心跳，
+    // ⚠️【必要妥协】adobeFireflyDeps 同时承载 CC 正版验证心跳，
     //           放行后激活拦截的最终防线为 PROCESS-NAME,AdobeGCClient.exe → REJECT-DROP（需 ENABLE_PROCESS_RULE=true + TUN 模式 + 管理员权限，进程规则本身不可靠）。
-    //           其余未覆盖进程详见 adobeFireflyDeps 注释中的 Firefly 必要副作用。
+    //           其余未覆盖进程详见 adobeFireflyDeps 注释中的 Firefly 必要妥协。
     // 关于 adobeUdpBlock 与 Firefly .adobe.io 域名的 QUIC 豁免机制：
     //   最终规则池展开顺序（由 LAYER_ORDER 决定，allow → block，与 push 调用书写顺序无关）：
     //   adobeFireflyDeps+adobeFireflyOnly（allow 层）→ adobeSuffix → adobeRegex → adobeUdpBlock（block 层）
@@ -1710,7 +1710,7 @@ function main(config) {
  *   💡 adobeFireflyDeps 推测项集中于数组末尾：
  *      独立块注释区分「已确认 / 待抓包确认」，优先保证 Firefly 功能正常可用，而非严格遵循最小权限原则；待抓包确认后可视情况将推测项移至 adobeSuffix（改为 REJECT）。
  *
- *   💡 Firefly 必要副作用（基于依赖链考量的必要豁免，原因见下）：
+ *   💡 Firefly 必要妥协（基于依赖链考量的必要豁免，原因见下）：
  *      isFireflyActive=true 时，以下进程的鉴权请求均走代理，进程规则仅覆盖 AdobeGCClient.exe：
  *        AdobeGCClient.exe  ← 由 processBlockRules REJECT-DROP 兜底（已覆盖）
  *        Creative Cloud.exe ← 含授权心跳（必要豁免）
