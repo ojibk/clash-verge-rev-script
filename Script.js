@@ -1,5 +1,5 @@
 /**
- *   Clash-Script 全局扩展脚本 · 基于哨兵标记的规则幂等清理与注入（Firefly 精确豁免版）v260602
+ *   Clash-Script 全局扩展脚本 · 基于哨兵标记的规则幂等清理与注入（Firefly 精确豁免版）v260604
  * 
  * ══════════════════════════ ░░ 脚本自述 ░░ ══════════════════════════
  *
@@ -71,8 +71,7 @@ function main(config) {
     const ENABLE_HOSTS_OVERRIDE  = true;         // Hosts DNS 覆写模块（四种映射子模式：黑洞型与欺骗型，由 HOSTS_MODE 选择）
     // ❗ 生效前提：CVR › DNS 覆写，必须同时开启「启用 DNS」和「使用 Hosts」。两个开关缺一不可，脚本无法感知 UI 层开关状态；
     //    未开启时本模块失效（脚本仍打印成功日志，但 Hosts 覆写不生效）。
-    // ℹ️ 依赖约束：ENABLE_SCRIPT=false 时此模块被跳过（脚本提前返回，Hosts 注入不执行）；
-    //    如需关闭规则注入同时保留 Hosts 覆写，应保持 ENABLE_SCRIPT=true 并关闭各子模块开关。
+    // ℹ️ 依赖约束：ENABLE_SCRIPT=false 时此模块被跳过（脚本提前返回，Hosts 注入不执行）；如需关闭规则注入同时保留 Hosts 覆写，应保持 ENABLE_SCRIPT=true 并关闭各子模块开关。
     // 💡 推荐使用 "ipv4-loopback"（当前默认值）：返回 127.0.0.1，产生 ECONNREFUSED（回环模拟拦截），
     //    应用兼容性通常最好；ipv4-blackhole 阻断速度最快，但可能被部分应用归类为断网状态。
     //
@@ -83,9 +82,9 @@ function main(config) {
     //
     // 各模式连接失败类型（来源：Mihomo wiki + OS 网络栈行为）：
     //   ipv4-loopback  → 127.0.0.1          → 本地 TCP 栈返回 RST（无监听端口），应用层收到 ECONNREFUSED，回环模拟拦截，更温和
-    //   ipv4-blackhole → 0.0.0.0            → 错误码取决于操作系统：无论哪种错误码，TCP SYN 都不会发出，阻断速度最快。但部分应用可能将此错误误判为断网状态，进而显示断网提示。
+    //   ipv4-blackhole → 0.0.0.0            → 错误码取决于操作系统：无论哪种错误码，TCP SYN 都不会发出，阻断速度最快。但部分应用可能将此错误误判为断网状态
     //   dual-loopback  → 127.0.0.1 + ::1    → 同 ipv4-loopback，IPv4/IPv6 双栈回环模拟拦截
-    //   dual-blackhole → 0.0.0.0 + ::       → 同 ipv4-blackhole，IPv4/IPv6 双栈黑洞拦截（慎用：向 :: 发起连接的 OS 级行为因平台而异，部分运行时对此处理不一致，可能导致应用异常）
+    //   dual-blackhole → 0.0.0.0 + ::       → 同 ipv4-blackhole，IPv4/IPv6 双栈黑洞拦截（慎用：向 :: 发起连接的 OS 级行为因平台而异，可能导致应用异常）
     //
     // 双栈黑洞模式（dual-blackhole）因 IPv6 的 :: 行为更激进，存在非预期的连接错误或应用异常；ipv4-blackhole 单栈版风险较低。
     const HOSTS_MODE = "ipv4-loopback";
@@ -94,13 +93,14 @@ function main(config) {
     // 模拟指定客户端的 TLS 握手特征，以增强抗检测能力。实际效果依赖目标站点策略，不保证绕过指纹检测或消除触发验证码。
     // - true:  为所有未设置 fingerprint 的节点注入默认指纹
     // - false: 完全跳过指纹注入，保留节点原始配置
+    // ℹ️ 两种方式可阻止指纹注入：
+    //    1. 设置 ENABLE_CLIENT_FINGERPRINT = false → 模块完全关闭，日志显示“已禁用”
+    //    2. 设置 DEFAULT_FINGERPRINT = "none"   → 模块运行但跳过注入，日志显示“已启用但 none”
+    //    两者最终效果相同（节点无 client-fingerprint 字段），可根据需要选择。
     const ENABLE_CLIENT_FINGERPRINT = true;
-    //
-    // 默认指纹，仅在 ENABLE_CLIENT_FINGERPRINT 为 true 时生效。
-    // 可选值: chrome / firefox / safari / iOS / android / edge / 360 / qq / random / none
-    // 💡 random：启动时从指纹库随机抽取一个值并固定使用，非每连接随机切换。random 模式下，各指纹的权重分布为：Chrome 50%，Safari 25%，iOS 16.7%，Firefox 8.3%
+    // 默认指纹，仅在 ENABLE_CLIENT_FINGERPRINT 为 true 时生效。可选值: chrome / firefox / safari / iOS / android / edge / 360 / qq / random / none
+    // 💡 random：启动时从指纹库（按 Cloudflare Radar 数据概率）生成一个浏览器指纹并固定使用，非每连接随机切换。概率：Chrome 50%，Safari 25%，iOS 16.7%，Firefox 8.3%
     const DEFAULT_FINGERPRINT = "chrome";
-    //
     // 指纹注入黑名单：名称中包含这些关键词的节点，即使没有指纹也不会被注入。用途：保护特殊节点（如专用 IP 节点、特定落地机）不被意外修改指纹。
     const FINGERPRINT_BLACKLIST = [
         // "专用", "原生", "nobook",     // 例：用户自建的落地节点，不希望被修改；原生 IP 节点；特定服务商要求不修改指纹。取消注释状态即启用。
@@ -148,44 +148,6 @@ function main(config) {
         console.warn(`⚠️ 进程规则要求 find-process-mode 为 strict 或 always，当前为 [${config["find-process-mode"] ?? "（未设置）"}]，进程规则将静默失效`);
     }
 
-    // ═══════════════ client-fingerprint 注入逻辑 ═══════════════
-
-    if (ENABLE_CLIENT_FINGERPRINT && DEFAULT_FINGERPRINT !== "none" && Array.isArray(config.proxies)) {
-        const blacklistSet = new Set(FINGERPRINT_BLACKLIST.map(s => s.toLowerCase()));
-        let injectedCount = 0;
-        let skippedCount = 0;
-        let preExistingCount = 0;
-
-        config.proxies = config.proxies.map(p => {
-            // 1. 尊重节点已有配置：如果已设置，直接保留
-            if (p['client-fingerprint']) {
-                preExistingCount++;
-                return p;
-            }
-
-            // 2. 检查黑名单：节点名包含黑名单关键词则跳过
-            const nodeName = (p.name || "").toLowerCase();
-            const isBlacklisted = [...blacklistSet].some(keyword => nodeName.includes(keyword));
-            if (isBlacklisted) {
-                skippedCount++;
-                return p;
-            }
-
-            // 3. 注入默认指纹
-            injectedCount++;
-            return { ...p, 'client-fingerprint': DEFAULT_FINGERPRINT };
-        });
-
-        console.log(`✅ TLS 指纹注入完成: 新增注入 ${injectedCount} 个，`
-                + `跳过黑名单 ${skippedCount} 个，`
-                + `保留原有指纹 ${preExistingCount} 个 (默认指纹: ${DEFAULT_FINGERPRINT})`);
-    } else if (ENABLE_CLIENT_FINGERPRINT && DEFAULT_FINGERPRINT === "none") {
-        console.log("ℹ️ TLS 指纹注入已启用，但默认指纹为 'none'，不执行注入。");
-    } else {
-        console.log("ℹ️ TLS 指纹注入已禁用 (ENABLE_CLIENT_FINGERPRINT = false)。");
-    }
-    // ────────────────────────────────────────────────
-
     // ══════════════════════ ENABLE_SCRIPT 分支 ══════════════════════
     // 先清理上次遗留标记，再插入新标记，防止多次切换后堆叠。
     // ──── 前置执行：基于哨兵标记的幂等性规则清理与注入（栈重建算法，O(N) 单次遍历，处理任意数量堆叠）────
@@ -207,8 +169,8 @@ function main(config) {
     //    清理算法依赖精确等值（===）匹配；若确需修改哨兵格式，须同步更新清理逻辑。null/undefined 也不会意外匹配哨兵字符串，严格等值天然防御。
     // 💡 TLD 选型：使用 RFC 6761 明确保留的 .invalid（无效域），而非 .local（RFC 6762 mDNS 保留域）。
     //    local 在部分系统级 mDNS 配置下可能触发 DNS 多播查询；invalid 作为保留域，标准 DNS 实现不应对其解析，产生额外 DNS 流量的风险极低，更为安全。
-    const _SENTINEL_START = "DOMAIN,START-script-sentinel-marker.invalid,REJECT";
-    const _SENTINEL_END   = "DOMAIN,END-script-sentinel-marker.invalid,REJECT";
+    const _SENTINEL_START = "DOMAIN,START-rule-injection-sentinel.invalid,REJECT";
+    const _SENTINEL_END   = "DOMAIN,END-rule-injection-sentinel.invalid,REJECT";
     {
         // 栈重建：单次遍历，O(N) 时间，O(N) 空间。
         // START 压栈时记录 newRules.length 快照；END 匹配时回退 length 至快照值，等效删除整段旧注入区块。
@@ -252,13 +214,54 @@ function main(config) {
         return config;
     }
 
+    // ═══════════════ client-fingerprint 注入逻辑 ═══════════════
+    if (ENABLE_CLIENT_FINGERPRINT && DEFAULT_FINGERPRINT !== "none" && Array.isArray(config.proxies)) {
+        const blacklistSet = new Set(FINGERPRINT_BLACKLIST.map(s => s.toLowerCase()));
+        const blacklistArr = [...blacklistSet];
+        let injectedCount = 0;
+        let skippedCount = 0;
+        let preExistingCount = 0;
+
+        config.proxies = config.proxies.map(p => {
+            // 1. 尊重节点已有配置：字段存在即保留（包括 null、false、""）
+            //    ⚠️ 变更 DEFAULT_FINGERPRINT 不会更新已有该字段的节点；如需强制覆盖，须先从订阅 YAML 删除节点的 client-fingerprint 字段后重新加载。
+            if (Object.prototype.hasOwnProperty.call(p, 'client-fingerprint')) {
+                preExistingCount++;
+                return p;
+            }
+
+            // 2. 检查黑名单：节点名包含黑名单关键词则跳过
+            const nodeName = (p.name || "").toLowerCase();
+            const isBlacklisted = blacklistArr.some(keyword => nodeName.includes(keyword));
+            if (isBlacklisted) {
+                skippedCount++;
+                return p;
+            }
+
+            // 3. 注入默认指纹
+            injectedCount++;
+            return { ...p, 'client-fingerprint': DEFAULT_FINGERPRINT };
+        });
+
+        console.log(`✅ TLS 指纹注入完成: 新增注入 ${injectedCount} 个，`
+                + `跳过黑名单 ${skippedCount} 个，`
+                + `保留原有指纹 ${preExistingCount} 个 (默认指纹: ${DEFAULT_FINGERPRINT})`);
+    } else if (ENABLE_CLIENT_FINGERPRINT && DEFAULT_FINGERPRINT === "none") {
+        console.log("ℹ️ TLS 指纹注入已启用，但默认指纹为 'none'，不执行注入。");
+    } else if (ENABLE_CLIENT_FINGERPRINT && !Array.isArray(config.proxies)) {
+        console.log("ℹ️ TLS 指纹注入已启用，但 config.proxies 不是数组（订阅可能仅含 proxy-providers），跳过注入。");
+    } else {
+        console.log("ℹ️ TLS 指纹注入已禁用 (ENABLE_CLIENT_FINGERPRINT = false)。");
+    }
+    // ────────────────────────────────────────────────
+
     console.log("=".repeat(28));
     // 当前实现手动 padStart 拼接，格式固定为 HH:MM:SS（本地时区），跨引擎跨区域设置格式一致（时间值仍为本地时区）。
-    const _now  = new Date();  // 计时终点
+    const _now  = new Date();  // 当前时间（用于格式化日志时间戳）
     const _ts = [_now.getHours(), _now.getMinutes(), _now.getSeconds()]
         .map(n => String(n).padStart(2, "0"))
         .join(":");
-    console.log(`📊 脚本执行开始 [${_ts}]`);
+    console.log(`📊 规则注入开始 [${_ts}]`);
     console.log("=".repeat(28));
 
     // ════════════════ 1. 智能识别代理策略组 ════════════════
@@ -307,9 +310,13 @@ function main(config) {
     //      → 「拒绝垃圾流量」含「拒绝」，保守排除：含「拒绝」的组名通常指向 REJECT 出口，用作路由出口将导致流量被拒绝。命名模糊时仍保守排除以防路由失效。
     //   ⚠️ "全局"已从此正则移出，由独立的 FALLBACK_CN_RE 负责识别（原因见下方 FALLBACK_CN_RE 及 isEligibleGroup 防回归说明）。
     //   ⚠️ 已知局限：后半段无位置锚点，采用子串匹配。若代理组命名为「非直连节点」、「不拒绝广告」等包含否定前缀的复合词，会因包含「直连」或「拒绝」子串而被错误排除。
-    //   ⚠️ 「默认节点」等含「默认」的复合词组名不触发（精确词加 $ 锚定为设计取舍）此类指向 DIRECT 的订阅极为罕见；若遇到，可手动将 proxyGroupName 默认值改为正确组名。
-    //   ⚠️ 已知限制：组名恰为「全球」（仅两字，无修饰词）时被精确匹配排除（^全球$），无警告日志，注入将进入容错路径或触发代理组排除断言中止。
-    //      含「全球」的复合词（如「全球节点」）因含「节点」关键词，可进入优选策略正常被选中。纯「全球」命名极为罕见；若遇到，可手动将 proxyGroupName 默认值改为正确组名。
+    //   ⚠️ 「默认节点」等含「默认」的复合词组名不触发（精确词加 $ 锚定为设计取舍）此类指向 DIRECT 的订阅极为罕见；此取舍可最大化保障通用订阅的兼容性。
+    //   ⚠️ 极端边界（两字排除）：组名恰为「全球」（仅两字，无修饰词）时被精确匹配排除（^全球$），无警告日志，注入将进入容错路径或触发代理组排除断言中止。
+    //      含「全球」的复合词（如「全球节点」）因含「节点」关键词，可进入优选策略正常被选中。
+    //   ℹ️ 针对极端特例的避坑指南，若订阅唯一组名恰为「全球」，有两种解法：
+    //      1. 直接在订阅转换前端或本地 Profile 覆写层将该代理组重命名（推荐，零代码侵入）；
+    //      2. 在 EXCLUDED_CN_RE 中移除 "全球" 的匹配项，并将 FALLBACK_CN_RE 改为 /^(?:全局|全球)$/（同时更新 FALLBACK_NAMES ∩ EXCLUDED_NAMES 断言的测试词列表）。
+    //  
     const EXCLUDED_CN_RE = /^(?:全(?:部|网|用|球)|所有|默认)$|(?:直连|拒绝)/;
 
     // 中文兜底组：「全局」对应 FALLBACK_NAMES 中的 GLOBAL，语义与行为均对称。
@@ -334,10 +341,10 @@ function main(config) {
 
     // 合法代理出口类型白名单（统一引用源：关键词优选/正则优选/类型优选各轮均引用此常量，新增类型只需改此处）。
     // ⚠️ 最终容错策略（第五轮）改用 _UNSUITABLE_TYPES 黑名单方式，不引用此常量；
-    //    两者从正反两面描述同一批被排除类型（relay / url-latency-benchmark / smart），
+    //    两者从正反两面描述同一批被排除类型（relay / url-latency-benchmark），
     //    修改此处须同步检查 _UNSUITABLE_TYPES，反之亦然，两者描述同一批被排除类型的正反两面，当前已知类型空间内互补，新增类型须同步检查两处。
     // load-balance 为动态路由策略，与 url-test 同级，具备合法出口语义，纳入白名单。
-    // 被排除的三类类型，原因各异：
+    // 被排除的类型（在此两个 Set 中均体现为排除）：
     //   relay：固定节点链路转发，强制指定出口，无用户可切换的节点选择语义。
     //   url-latency-benchmark：测速专用工具，以延迟评测为目的，不应作为流量出口组。
     //   smart：Mihomo v1.18+ 正式稳定类型，自适应出口选择，具备合法出口语义，已纳入白名单。旧版对 smart 行为不保证，若遇路由异常可回退：将 smart 从本 Set 移除。
@@ -452,7 +459,7 @@ function main(config) {
 
         // [兜底降级] 降级选取（GLOBAL/"全局" 等，优选策略全部失败时才触发）
         // ⚠️ 不能直接取首个元素，订阅第一个组可能是 DIRECT，导致本脚本注入的代理规则失效（流量直连）
-        // 保留类型过滤（与前三轮优选策略一致），防止选中固定链路、测速专用或实验性自适应类型（relay / url-latency-benchmark / smart）。
+        // 保留类型过滤（与前三轮优选策略一致），防止选中固定链路（relay）和测速专用（url-latency-benchmark）；smart 已纳入 VALID_PROXY_TYPES，可被选中。
         if (!_mainEntry) {
             _mainEntry = _groupsPrepped.find(({ g, cleanName }) =>
                 _isFallbackGroupCore(cleanName) &&
@@ -468,7 +475,7 @@ function main(config) {
         // [最终容错选取] 安全兜底（全部前置策略失败时的最后屏障）────────────────
         // 优选层策略（关键词/正则/类型）与兜底层降级策略全部失效时进入此分支。
         // 目的：在显式 return config 中止注入之前，尽力寻找可用组。
-        // 策略：仅排除出口语义不适合的类型（relay / url-latency-benchmark / smart），其他类型均允许；
+        // 策略：仅排除出口语义不适合的类型（relay / url-latency-benchmark），其他类型均允许；smart 已移入 VALID_PROXY_TYPES，此处不再排除。
         //   为减少用户干预成本，在无理想出口组时优先选取次优组而非中止注入；用户若发现路由异常，可通过添加关键词或调整组名来引导识别。
         //   注：load-balance 已纳入 VALID_PROXY_TYPES，不在 _UNSUITABLE_TYPES 排除列表中。
         if (!_mainEntry) {
@@ -482,7 +489,7 @@ function main(config) {
             );
             if (_mainEntry) {
                 console.warn(`🚨 严重警告：关键词/正则/类型优选 + 兜底组降级全部失败，触发最终容错选取`);
-                console.warn(`   已排除固定链路 / 测速专用 / 实验性自适应类型（relay / url-latency-benchmark / smart），`
+                console.warn(`   已排除固定链路（relay）/ 测速专用（url-latency-benchmark）；smart 已纳入白名单，可被选中；`
                 + `选取首个可用组 [${_mainEntry.g.name}] (type: ${_mainEntry.g.type ?? "未知"})`);
                 console.warn(`   建议检查订阅结构是否符合关键词列表`);
             }
@@ -548,7 +555,7 @@ function main(config) {
     //   两者不是冗余，是刻意的"宽进严出（识别阶段宽容，注入阶段严格）"纵深防御：识别尽量不漏选，注入绝对不破坏语法。
     // proxyGroupName 存储原始值（mainGroup.name），sanitizeName 的清洗结果不用于此处。清洗结果仅用于排除词汇匹配，注入时仍使用原始值。
     // 四类拒绝维度（不同攻击向量），详细字符集见附录特殊字符集说明。
-    // 注：注：_SANITIZE_RE 与此断言存在字符集重叠，但两者作用层次不同（清洗识别副本 vs 拒绝注入原始值），目的不重叠，非冗余。
+    // 注：_SANITIZE_RE 与此断言存在字符集重叠，但两者作用层次不同（清洗识别副本 vs 拒绝注入原始值），目的不重叠，非冗余。
     // 💡 两层覆盖范围的完整差异说明见 _SANITIZE_RE 注释（权威定义源）；
     //    本断言为注入层权威说明：仅覆盖 Clash/YAML 语法破坏字符，不覆盖 Bidi 控制符（Bidi 视觉欺骗问题由识别层处理，注入层不需要重复防御）。
     if (/[,\u0000-\u001F\u007F\u0085\u2028\u2029]/.test(proxyGroupName)) {
@@ -602,7 +609,8 @@ function main(config) {
     //     Creative Cloud.exe ← CC 桌面客户端含授权心跳（基于依赖链考量的必要豁免：心跳放行不触发重验证，TUN 进程规则本身不可靠）
     //     CCXProcess.exe     ← CC 扩展宿主进程（同 Creative Cloud.exe，必要豁免）
     //     CoreSync.exe       ← CC 同步守护进程（同上）
-    //   取舍依据：非官方激活环境中，补丁通过阻断 AdobeGCClient.exe 的出站网络连接来绕过激活验证，
+    //   取舍依据：非官方激活环境中，补丁修改了 AdobeGCClient.exe 的本地验证逻辑（本地返回激活成功，无需真实网络应答）；
+    //   本脚本在此基础上阻断其出站连接，作为额外网络层防线，防止激活状态回报和设备信息上传。
     //   其余进程的心跳即便放行也不会触发重新验证。进程规则本身需管理员+TUN，不可靠。
     //
     // ⚠️【QUIC（RFC 9000；基于 UDP 的安全传输协议，内嵌 TLS 1.3）豁免机制】Firefly 相关 .adobe.io 域名在 adobeUdpBlock 之前注入（first-match），
@@ -629,11 +637,12 @@ function main(config) {
         //    若追求最严格的拦截策略，可手动将其移至 adobeSuffix（改为 REJECT）并重新测试 Firefly 功能是否正常，确认后再决定是否从本数组移除。
         "scdown.adobe.io",                        // 【推断·放行风险低、漏拦截风险可接受】基于行为推断，未经抓包验证；Firefly 在实测中依赖此端点（即使功能定义不明）
         "lcs-cops.adobe.io",                      // 【推断】云端授权策略，推断为 Firefly 订阅鉴权；社区有 2024+ PS 版本产生鉴权流量的反馈，但无公开抓包资料支撑，维持待确认。
+                                                  //  若此域实为 CC 激活验证端点（非 Firefly 专属），isFireflyActive=true 时将被错误放行，激活拦截防线出现缺口。
     ];
 
     // 🚫 ─────────────────────── Adobe 激活 / 遥测核心拦截 ───────────────────────
     // 💡 关于 REJECT vs REJECT-DROP（Mihomo 的两种拒绝策略）：
-    //    REJECT      发送 TCP RST（TCP 侧）/ ICMP Port Unreachable（UDP 侧），软件立即收到连接拒绝，放弃重试并进入离线模式，启动无卡顿，推荐用于遥测/授权域名。
+    //    REJECT      发送 TCP RST（TCP 侧）/ ICMP Port Unreachable（UDP 侧），软件快速感知失败（通常切换离线模式或放弃重试），启动无卡顿，推荐用于遥测/授权域名。
     //    REJECT-DROP 静默丢包，不回应任何数据包（TCP 和 UDP 均适用），
     //                TCP 侧：软件 Socket 陷入 SYN_SENT 直至系统 TCP 超时；
     //                UDP 侧：数据包被无声丢弃，软件等待响应直至应用层超时；
@@ -681,7 +690,7 @@ function main(config) {
 
     // 正则：拦截随机子域（遥测特征：8-12 位随机字符）改用 REJECT（非 REJECT-DROP）：
     // 遥测随机子域无"拖延感知"的必要，此类域名不存在切换备用域名的自适应逻辑，
-    // REJECT 让软件立即感知失败并进入离线模式，避免 15–30s 超时卡顿影响 PS 启动体验。
+    // REJECT 让软件快速感知失败（通常切换离线模式或放弃重试），避免 15–30s 超时卡顿影响 PS 启动体验。
     const adobeRegex = [
         `DOMAIN-REGEX,${_ADOBE_RAND_RE_STR},REJECT`,
         // ⚠️ senseicore（10位）/ senseimds（9位）也满足 _ADOBE_RAND_RE_STR，但均为具名服务域名而非随机遥测子域。
@@ -727,34 +736,7 @@ function main(config) {
         //    Mihomo 需开启 Sniffer（dns.sniffer）解析 QUIC 握手 SNI 才能识别域名；
         //    实际生效取决于 Mihomo 版本，不可作为唯一防线，上方精确规则为主要覆盖。
         //
-        // ⚠️【ECH 架构级边界——仅适用于绕过 Mihomo DNS 的场景】
-        //    ECH（Encrypted Client Hello）将 TLS ClientHello 中的 SNI 加密，使 Sniffer 无法嗅探域名。
-        //    但其对 DOMAIN 类规则的实际影响，取决于 Mihomo 的域名识别路径：
-        //
-        //   路径A（标准 Fake-IP + TUN 模式，CVR 默认配置路径）：
-        //     app → Mihomo DNS → 返回 198.18.x.x（Fake-IP），记录映射 198.18.x.x→域名
-        //     → TUN 截获 QUIC 流量到 198.18.x.x → Mihomo 查 Fake-IP 表 → 域名已知
-        //     → DOMAIN-SUFFIX / DOMAIN-KEYWORD 规则正常生效，ECH 加密与否无关。
-        //     → ✅ 此路径下本注释块描述的 MATCH 滑落问题【不成立】。
-        //
-        //   路径B（应用绕过 Mihomo DNS，使用 DoH / DoT 或硬编码真实 IP）：
-        //     Mihomo 无 Fake-IP 映射记录 → 只能靠 Sniffer 嗅探 SNI
-        //     → DOMAIN 类规则全部失效；PROCESS-NAME 规则不依赖 SNI，仍可命中（如 AdobeGCClient.exe）；
-        //       若无 PROCESS-NAME 规则覆盖（Firefly 渲染进程 / PS 调用 Firefly API 的进程通常无对应条目），
-        //       流量最终滑落至 MATCH 兜底策略
-        //     → 若兜底为 DIRECT，Firefly 因地区限制直连失败；内核产生 IP 命中 MATCH 的日志，
-        //       但域名信息丢失，溯源难度极高（可观测性降级，非完全静默）
-        //     → 缓解：将 MATCH 兜底策略指向代理出口（而非 DIRECT）；或封锁外部 DoT 端口（853/TCP）；
-        //             DoH 与 HTTPS 共用 443 端口，无法通过端口封锁，需域名级阻断已知 DoH 解析器
-        //             （如 DOMAIN,one.one.one.one,REJECT / DOMAIN,dns.google,REJECT 等；
-        //              1.1.1.1 为 IP 地址而非域名，须用 IP-CIDR,1.1.1.1/32,REJECT 阻断直连）
-        //     → ✅ 此路径下 ECH 滑落 MATCH 的描述成立。
-        //
-        //   → 拦截侧兜底：
-        //      · 路径A：DOMAIN 规则正常生效，PROCESS-NAME 为附加纵深，非唯一手段。
-        //      · 路径B：DOMAIN 规则全部失效，PROCESS-NAME 规则（通过系统 Socket 获取进程信息，
-        //        不依赖 SNI，不受 ECH 影响）是此路径下唯一有效的域名无关拦截手段；
-        //        但 Firefly 渲染进程等无对应 PROCESS-NAME 条目，无法被进程规则覆盖。
+        // ⚠️【ECH 架构级边界——仅适用于绕过 Mihomo DNS 的场景。详见 adobeSharedDeps 注释中的路径A/B 分析】
     ];
 
     // Adobe WebSocket 遥测（2025 年新增：以 WSS（WebSocket Secure）建立持久 TCP 长连接上传遥测；
@@ -781,13 +763,10 @@ function main(config) {
     //           其余未覆盖进程详见 adobeSharedDeps 注释中的 Firefly 必要妥协。
     // 关于 adobeUdpBlock 与 Firefly .adobe.io 域名的 QUIC 豁免机制：
     //   最终规则池展开顺序（由 LAYER_ORDER 决定，allow → block，与 push 调用书写顺序无关）：
-    //   adobeSharedDeps+adobeFireflyOnly（allow 层）→ adobeSuffix → adobeRegex → adobeUdpBlock（block 层）
-    //   isFireflyActive=true 时，allow 层的精确 DOMAIN-SUFFIX 规则（如
-    //   firefly-api.adobe.io / clio.adobe.io 等）已在 adobeUdpBlock 之前入 pool。
-    //   Mihomo first-match（首条命中生效）：Firefly 域名的 UDP 流量先命中 allow 层走代理，
-    //   adobeUdpBlock 的 AND,((NETWORK,UDP),(DOMAIN-SUFFIX,adobe.io)) 不再执行。
-    //   → 豁免效果由注入顺序自动保证（allow 层先于 adobeUdpBlock 入 pool，先命中即生效），无需额外处理。
-    //   ⚠️ 前提：此豁免仅在 Mihomo 能识别 SNI 或存在 Fake-IP 映射时成立。
+    //   adobeSharedDeps+adobeFireflyOnly（allow 层）→ adobeSuffix → adobeRegex → adobeUdpBlock（block 层）isFireflyActive=true 时，
+    //   allow 层的精确 DOMAIN-SUFFIX 规则（如 firefly-api.adobe.io / clio.adobe.io 等）已在 adobeUdpBlock 之前入 pool。
+    //   Mihomo first-match（首条命中生效）：Firefly 域名的 UDP 流量先命中 allow 层走代理，adobeUdpBlock 的 AND,((NETWORK,UDP),(DOMAIN-SUFFIX,adobe.io)) 不再执行。
+    //   → 豁免效果由注入顺序自动保证（allow 层先于 adobeUdpBlock 入 pool，先命中即生效），无需额外处理。⚠️ 前提：此豁免仅在 Mihomo 能识别 SNI 或存在 Fake-IP 映射时成立。
     //   ⚠️ ECH 路径分析同上，详见 adobeSharedDeps 注释。
     const adobeFireflyOnly = [
         // Firefly AI 核心。
@@ -930,9 +909,9 @@ function main(config) {
         // 来源：多份抓包记录及 hosts 屏蔽教程（CSDN / 博客园 / 52pojie）
         // XMind 2020+（Electron）与 XMind 8（Java）均通过以下域名验证授权：
         "www.xmind.app",        // XMind 2020+ 授权验证主接口（Electron 版）
-        "www.xmind.net",        // XMind 8 授权验证接口（Java 版）/ 国际更新检查
+        "www.xmind.net",        // XMind 8 授权验证接口（Java 版）/ 更新检查
         "www.xmind.cn",         // XMind 中文站授权验证 / 国内更新检查
-        "dl2.xmind.cn",         // XMind 8 更新安装包下载服务器（弹出更新提示的来源）
+        "dl2.xmind.cn",         // XMind 8 更新安装包下载 CDN（版本检查由 www.xmind.net 触发，此域仅承载安装包分发
         // ⚠️ 扩展提醒：如需追加其他 XMind 子域，请注意 api.xmind.net / api.xmind.app 等 API 端点可能承载功能性请求（而非仅授权验证），拦截前应抓包确认，避免影响正常使用。
 
         // ──────────────────────────── Listary ────────────────────────────
@@ -968,7 +947,7 @@ function main(config) {
         "pcfg.wps.cn",                           // WPS 配置/广告下发
         "wps.com.cn",                            // WPS 备用主域（.com.cn 为金山注册的备用主域）
                                                  // ⚠️ 全域 SUFFIX 拦截（含所有子域）；无抓包资料确认其子域仅含遥测端点，拦截后可能影响账号类或功能类子域。
-                                                 //    若发现登录异常，可改用精确 DOMAIN 匹配（类比 360.cn 的处理方式）。
+                                                 //    若发现登录异常，可改用精确子域 DOMAIN 匹配（与 360.cn 的保守策略一致：主域放行，仅拦截已确认的遥测子域）
         "wpsgold.wpscdn.cn",                     // WPS 广告资源 CDN（内容分发网络）
         // "sync.wps.cn",                        // ⚠️ 已注释：WPS 云文档同步，拦截后云同步失效
         // 海康威视（仅精确子域，主域不拦截）
@@ -992,9 +971,10 @@ function main(config) {
         // "api.sogoucloud.com",                 // ⚠️ 已注释：搜狗输入法云端接口，域名拼写无公开抓包资料确认，待验证后启用
         // 腾讯 Bugly 崩溃上报 SDK（Software Development Kit，软件开发工具包；大量国产软件集成，含设备指纹）
         "bugly.qq.com",                          // 腾讯 Bugly 崩溃上报 SDK
+        "bugly.gtimg.com",                          // 腾讯 Bugly 管理后台使用的静态资源 CDN（未覆盖）
         // 字节跳动系（抖音/剪映/头条/西瓜共用）
         "log.snssdk.com",                        // 字节系客户端日志上报（头条/西瓜等）
-        "i.snssdk.com",                          // 字节跳动国内 SDK（软件开发工具包）遥测
+        "i.snssdk.com",                          // 字节跳动国内 SDK 主接口域（⚠️ 非单纯遥测：含账号认证、功能 API 等，拦截后可能导致字节系 APP 功能性断连，非仅屏蔽上报）
         "log.byteoversea.com",                   // 字节跳动海外日志上报（抖音/剪映共用）
         // 剪映专业版（CapCut）
         "metrics.capcut.com",                    // 剪映遥测上报
@@ -1113,13 +1093,11 @@ function main(config) {
     // ─────── Mozilla / Firefox 遥测（REJECT 立即终止连接，减少浏览器重试） ───────
     const mozillaSuffix = [
         "telemetry.mozilla.org",                 // Firefox 遥测主域
-        "incoming.telemetry.mozilla.org",        // 遥测数据接收端点
         "experiments.mozilla.org",               // Firefox 实验性功能遥测
         "healthreport.mozilla.org",              // Firefox 健康报告上报
         "metrics.mozilla.com",                   // 指标统计
         "crash-stats.mozilla.com",               // Mozilla Crash Reporter 崩溃报告
-        // ⚠️ 副作用：拦截后 Firefox 地址栏持续显示「网络连接可能受限」警告，
-        //    对用户有明显可感知的负面体验（该请求本身无意义，但与遥测不同，拦截会影响 UI 显示）。
+        // ⚠️ 副作用：拦截后 Firefox 地址栏持续显示「网络连接可能受限」警告，对用户有明显可感知的负面体验（该请求本身无意义，但与遥测不同，拦截会影响 UI 显示）。
         //    如能接受上述副作用，可取消以下注释以屏蔽此探测请求：
         // "detectportal.firefox.com",           // Firefox 网络连接检测（该探测本身无业务价值），但拦截后 Firefox 地址栏持续报"网络连接可能受限"
     ];
@@ -1197,7 +1175,7 @@ function main(config) {
         // ⚠️ 部分请求经 msedgewebview2.exe 发出（系统共享进程，不可拦截），已由 corelSuffix 域名层覆盖。
         "PROCESS-NAME,CorelDRW.exe,REJECT-DROP",
         // ──── 国产流氓软件：改用 REJECT（快速拒绝，用户感知更好，不卡死软件）────
-        "PROCESS-NAME,360sd.exe,REJECT",                     // 360 杀毒主进程，可能导致 360 反复弹窗报告"网络异常"，若印证则改用 REJECT-DROP 让 360 静默超时反而更好。
+        "PROCESS-NAME,360sd.exe,REJECT-DROP",                // 360 杀毒主进程，可能导致 360 反复弹窗报告"网络异常"，改用 REJECT-DROP 让 360 静默超时反而更好。
         "PROCESS-NAME,360tray.exe,REJECT",                   // 360 系统托盘弹窗进程
         "PROCESS-NAME,2345Mini.exe,REJECT",                  // 2345 迷你窗口/弹窗进程
         "PROCESS-NAME,2345Helper.exe,REJECT",                // 2345 后台辅助进程
@@ -1211,7 +1189,7 @@ function main(config) {
     const processProxyRules = [ // 进程代理（当前为空占位，示例见下方）
         // 示例：修改进程名后取消注释即可——策略组名由脚本自动填入（proxyGroupName），
         // 依赖前提：proxyGroupName 已通过代理组排除断言、Token 断言与存在性断言，此处取值为合法代理出口组名。
-        // 注意：以上三道断言与 ENABLE_PROXY 无关，即使 ENABLE_PROXY=false，proxyGroupName 仍有效；
+        // 注意：以上三道断言（代理组识别阶段执行，代码位置见下方 proxy-group 识别逻辑）与 ENABLE_PROXY 无关，即使 ENABLE_PROXY=false，proxyGroupName 仍有效；
         //   此处取消注释后进程代理规则由 ENABLE_PROCESS_RULE 独立控制，ENABLE_PROXY=false 不影响其注入。
         // `PROCESS-NAME,Telegram.exe,${proxyGroupName}`,
         // `PROCESS-NAME,Slack.exe,${proxyGroupName}`,
@@ -1375,7 +1353,7 @@ function main(config) {
                 : ["REJECT",       layerPools.block];
             pushSuffix(adobeSharedDeps, _fireflyAction, _fireflyPool);
             pushSuffix(adobeFireflyOnly, _fireflyAction, _fireflyPool);
-            // Adobe（遥测/授权域改用 REJECT，软件立即进入离线模式，避免启动卡顿）
+            // Adobe（遥测/授权域改用 REJECT，软件快速感知失败（通常切换离线模式或放弃重试），避免启动卡顿）
             pushSuffix(adobeSuffix, "REJECT", layerPools.block);
             pushLayer("block", adobeRegex);
             // ❗ adobeUdpBlock 仅 TUN 模式有效，系统代理模式下这些规则不会命中任何 UDP 流量（见 adobeUdpBlock 声明处注释）
@@ -1703,7 +1681,7 @@ function main(config) {
             // existingSet.size = 原 fake-ip-filter 所有条目总数（含订阅自带的非脚本条目）；
             // 本脚本条目已存在数 = hijackDomains.length - newEntries.length。
             const _alreadyIn = hijackDomains.length - newEntries.length;
-            console.log(`   fake-ip-filter 去重后新增: ${newEntries.length} 条（注入前已有 ${_alreadyIn} 条脚本条目重合，原列表共 ${existingSet.size} 条）`);
+            console.log(`   fake-ip-filter 去重后新增: ${newEntries.length} 条（注入前已有 ${_alreadyIn} 条脚本条目重合，原列表去重后共 ${existingSet.size} 条）`);
             if (existingSet.size === 0) {
                 console.log("（fake-ip-filter 此前为空或已被 CVR UI 清空，已完整重新写入）");
             }
@@ -1746,7 +1724,7 @@ function main(config) {
  *       no-resolve 在此场景下自然无需发挥作用，规则仍按 IP 直接比对，与有无 no-resolve 无关
  *
  *   ⚠️ REJECT-DROP（静默丢包）vs REJECT（立即拒绝）选型原则：
- *     REJECT      → TCP 侧：立即返回 TCP RST（重置报文），软件立刻感知失败，进入离线模式，启动无卡顿；
+ *     REJECT      → TCP 侧：立即返回 TCP RST（重置报文），软件快速感知失败（具体行为依软件实现而异），启动无卡顿；
  *                   UDP 侧：返回 ICMP Port Unreachable，软件同样立即感知失败；推荐用于遥测 / 授权域名
  *     REJECT-DROP → TCP/UDP 均适用：静默丢包，不回应任何报文；TCP 侧：软件 Socket 陷入 SYN_SENT 直至系统 TCP 超时，应用层 Socket 阻塞约 15–30s（含 TCP 重传轮次），
  *                   实际取决于 OS TCP 重传配置（Windows 10 默认 TcpMaxSynRetransmissions=2，SYN 重传总时长约 21s；Windows 11 默认值已调整，
@@ -1776,8 +1754,9 @@ function main(config) {
  *        Creative Cloud.exe ← 含授权心跳（必要豁免）
  *        CCXProcess.exe     ← CC 扩展宿主进程（必要豁免）
  *        CoreSync.exe       ← CC 同步守护进程（必要豁免）
- *      取舍依据：非官方激活环境中，补丁通过阻断 AdobeGCClient.exe 的出站连接来绕过激活验证，
- *      其余进程的心跳即便放行也不会触发重新验证；TUN 进程规则本身不可靠，扩展覆盖成本高于收益。
+ *      取舍依据：非官方激活环境中，补丁修改了 AdobeGCClient.exe 的本地验证逻辑（本地返回激活成功，无需真实网络应答）；本脚本在此基础上阻断其出站连接，
+ *      作为额外网络层防线，防止激活状态回报和设备信息上传。其余进程的心跳即便放行也不会触发重新验证；TUN 进程规则本身不可靠，扩展覆盖成本高于收益。
+ *      
  *
  *   💡 KEYWORD "entitlement.autodesk" 与 "api.entitlements.autodesk.com" 无重叠：
  *      DOMAIN-KEYWORD 为子串匹配，"entitlement.autodesk"（entitlement 后紧跟点）
@@ -1803,7 +1782,7 @@ function main(config) {
  *     [优选·正则]   正则宽松匹配           ← 次选，排除兜底组
  *     [优选·类型]   类型约束              ← 放宽数量约束
  *     [兜底降级]    兜底组选取             ← GLOBAL/"全局" 等
- *     [最终容错选取] 排除固定链路、测速专用或实验性自适应类型（relay / url-latency-benchmark / smart），最低限度类型语义过滤
+ *     [最终容错选取] 排除固定链路（relay）/ 测速专用（url-latency-benchmark）；smart 已纳入白名单，不再排除
  *     全部失败 → 直接 return config（显式中止注入，网络退回订阅原始规则）
  *   ──────────────────────────────────────────────────────────────
  *
@@ -1841,6 +1820,14 @@ function main(config) {
  *     isFireflyActive 是 ENABLE_FIREFLY && ENABLE_BLOCK 的派生值，无独立存储，是两个上游开关逻辑与运算的投影，
  *     无法独立修改，即无法反向影响 ENABLE_FIREFLY 或 ENABLE_BLOCK。
  *     所有 Firefly 逻辑均使用此变量，防止"看起来开了但没生效"的状态误读（ENABLE_FIREFLY=true + ENABLE_BLOCK=false 时自动降级为 false）。
+ *   ──────────────────────────────────────────────────────────────
+ *
+ *   ── client-fingerprint 注入模块 ──
+ *     该模块在所有节点上统一注入 TLS 客户端指纹（如 chrome），以增强抗检测能力。
+ *     设计意图：模拟主流浏览器 TLS 握手特征，减少因代理客户端指纹异常触发的验证码。
+ *     注意：模块不覆盖已设置指纹的节点（尊重已有配置），修改 DEFAULT_FINGERPRINT 后需手动清理旧指纹。
+ *     黑名单支持子串匹配（大小写不敏感），用于保护特殊节点（如专用 IP 落地机）不被修改。
+ *     模块在 ENABLE_SCRIPT 检查之后执行，因此受 ENABLE_SCRIPT 统一控制。
  *   ──────────────────────────────────────────────────────────────
  * 
  * 特殊字符集说明：
